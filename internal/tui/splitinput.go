@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	gotty "github.com/mattn/go-tty"
+	"golang.org/x/sys/unix"
 )
 
 const splitInputVisibleQueueRows = 3
@@ -35,9 +36,11 @@ type splitInput struct {
 	scrollEnd     int
 	bandStart     int
 
-	active        bool
-	inputTTY      *gotty.TTY
-	buf           []rune
+	active          bool
+	inputTTY        *gotty.TTY
+	captureKeysDone sync.WaitGroup
+	wakeR, wakeW    *os.File // self-pipe: write to wakeW to unblock captureKeys' Poll
+	buf             []rune
 	queue         []string
 	completions   []string
 	outputStarted bool
@@ -132,11 +135,18 @@ func (s *splitInput) Enter() io.Writer {
 		return nil
 	}
 
+	var wakeR, wakeW *os.File
+	if r, w, pipeErr := os.Pipe(); pipeErr == nil {
+		wakeR, wakeW = r, w
+	}
+
 	s.mu.Lock()
 	s.width = w
 	s.height = h
 	s.active = true
 	s.inputTTY = inputTTY
+	s.wakeR = wakeR
+	s.wakeW = wakeW
 	s.buf = s.buf[:0]
 	s.queue = s.queue[:0]
 	s.completions = nil
@@ -154,7 +164,8 @@ func (s *splitInput) Enter() io.Writer {
 	s.winchCh = make(chan os.Signal, 1)
 	signal.Notify(s.winchCh, syscall.SIGWINCH)
 	go s.watchResize()
-	go s.captureKeys(inputTTY)
+	s.captureKeysDone.Add(1)
+	go s.captureKeys(inputTTY, wakeR)
 	go s.pulseSeparator()
 
 	return &splitWriter{s: s}
@@ -175,10 +186,8 @@ func (s *splitInput) Exit() (queued []string, pending string) {
 	queued = s.queue
 	s.queue = nil
 	s.completions = nil
-	if len(s.buf) > 0 {
-		pending = string(s.buf)
-		s.buf = s.buf[:0]
-	}
+	// Don't collect s.buf yet — captureKeys may still be mid-read and about
+	// to add the last typed character to buf before it sees done is closed.
 	s.flushDeferredLFsForExitLocked()
 
 	fmt.Fprint(s.out, "\033[r")
@@ -188,10 +197,37 @@ func (s *splitInput) Exit() (queued []string, pending string) {
 
 	s.mu.Unlock()
 
+	wakeW := s.wakeW
+	s.wakeW = nil
+	wakeR := s.wakeR
+	s.wakeR = nil
+
 	if inputTTY != nil {
 		inputTTY.Close()
 	}
 	signal.Stop(s.winchCh)
+
+	// Poke the self-pipe so captureKeys' Poll() wakes immediately instead of
+	// waiting out the remainder of its 50 ms timeout.
+	if wakeW != nil {
+		wakeW.Write([]byte{0}) //nolint:errcheck
+		wakeW.Close()
+	}
+
+	// Wait for captureKeys to finish so that any character typed just as the
+	// response ended is saved to s.buf before we collect it.
+	s.captureKeysDone.Wait()
+
+	if wakeR != nil {
+		wakeR.Close()
+	}
+
+	s.mu.Lock()
+	if len(s.buf) > 0 {
+		pending = string(s.buf)
+		s.buf = s.buf[:0]
+	}
+	s.mu.Unlock()
 
 	return queued, pending
 }
@@ -330,12 +366,51 @@ func (s *splitInput) drawBottomAreaLocked() {
 	fmt.Fprintf(s.out, "\033[%d;1H\033[2K%s", inputRow, s.renderInputBufferLocked())
 }
 
-func (s *splitInput) captureKeys(inputTTY *gotty.TTY) {
+func (s *splitInput) captureKeys(inputTTY *gotty.TTY, wakeR *os.File) {
+	defer s.captureKeysDone.Done()
 	if inputTTY == nil {
 		return
 	}
+
+	// tty.Close() only closes the output fd and restores termios; it never
+	// closes the input fd, so a blocking ReadRune would hang indefinitely after
+	// Exit() signals done.  Poll with a short timeout so we can check done
+	// periodically, and include the self-pipe (wakeR) so Exit() can wake us
+	// immediately rather than waiting out the remainder of the timeout.
+	inFd := int32(inputTTY.Input().Fd())
+	pollFds := []unix.PollFd{{Fd: inFd, Events: unix.POLLIN}}
+	if wakeR != nil {
+		pollFds = append(pollFds, unix.PollFd{Fd: int32(wakeR.Fd()), Events: unix.POLLIN})
+	}
+
 	var pendingTokens []string
 	for {
+		select {
+		case <-s.done:
+			return
+		default:
+		}
+
+		n, err := unix.Poll(pollFds, 50) // 50 ms timeout
+		if err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			return
+		}
+		if n == 0 {
+			continue // timeout — loop back and re-check done
+		}
+
+		// Data is available. Re-check done before reading so that a character
+		// typed right as the turn ends is either saved to s.buf (if we read it)
+		// or left in the kernel buffer for readline (if done was already closed).
+		select {
+		case <-s.done:
+			return
+		default:
+		}
+
 		token, rest, err := readSplitInputToken(inputTTY.ReadRune, pendingTokens)
 		pendingTokens = rest
 		if err != nil {
@@ -345,14 +420,25 @@ func (s *splitInput) captureKeys(inputTTY *gotty.TTY) {
 			continue
 		}
 
+		// Check done again after reading — a character typed just as the turn
+		// ended may have been consumed here; save it so Exit() can return it as
+		// pending input rather than dropping it.
 		select {
 		case <-s.done:
+			if isPrintableSplitInputToken(token) {
+				s.mu.Lock()
+				s.buf = append(s.buf, []rune(token)...)
+				s.mu.Unlock()
+			}
 			return
 		default:
 		}
 
 		s.mu.Lock()
 		if !s.active {
+			if isPrintableSplitInputToken(token) {
+				s.buf = append(s.buf, []rune(token)...)
+			}
 			s.mu.Unlock()
 			return
 		}

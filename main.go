@@ -12,7 +12,9 @@ import (
 	"ollie/pkg/agent"
 	"ollie/pkg/backend"
 	"ollie/pkg/config"
+	"ollie/pkg/tools"
 	execute "ollie/pkg/tools/execute"
+	"ollie/pkg/tools/file"
 	"ollie-tui/internal/tui"
 )
 
@@ -44,6 +46,12 @@ func main() {
 		home+"/.local/state/ollie",
 		home+"/.cache/ollie/exec",
 	)
+	newDispatcher := func() tools.Dispatcher {
+		d := tools.NewDispatcher()
+		d.AddServer("execute", builtinExec)
+		d.AddServer("file", file.New())
+		return d
+	}
 
 	agentName := os.Getenv("OLLIE_AGENT")
 	if agentName == "" {
@@ -76,7 +84,7 @@ func main() {
 
 	cfgPath := agentConfigPath(agentsDir, agentName)
 	cfg, cfgErr := config.Load(cfgPath)
-	env := agent.BuildAgentEnv(cfg, builtinExec)
+	env := agent.BuildAgentEnv(cfg, newDispatcher())
 
 	var initialSession *agent.Session
 	if len(resumeMessages) > 0 {
@@ -90,8 +98,8 @@ func main() {
 		SessionsDir: sessionsDir,
 		SessionID:   sessionID,
 		Session:     initialSession,
-		Env:         env,
-		BuiltinExec: builtinExec,
+		Env:           env,
+		NewDispatcher: newDispatcher,
 	})
 
 	if cfgErr != nil {
