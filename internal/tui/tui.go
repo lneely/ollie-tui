@@ -223,6 +223,13 @@ func MakeOutputFn(out io.Writer) agent.EventHandler {
 			fmt.Fprintln(out, "agent stalled")
 		case "info":
 			fmt.Fprint(out, em.Content)
+		case "usage":
+			var in, out2 int
+			fmt.Sscanf(em.Content, "%d %d", &in, &out2)
+			total := in + out2
+			if total > 0 {
+				fmt.Fprintf(out, "%d tokens (%d in, %d out)\n", total, in, out2)
+			}
 		case "newline":
 			fmt.Fprintln(out)
 		}

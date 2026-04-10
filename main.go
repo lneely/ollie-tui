@@ -13,6 +13,7 @@ import (
 	"ollie/pkg/tools"
 	execute "ollie/pkg/tools/execute"
 	"ollie/pkg/tools/file"
+	"ollie/pkg/tools/reasoning"
 	"ollie-tui/internal/tui"
 )
 
@@ -40,8 +41,9 @@ func main() {
 	}
 
 	newDispatcher := tools.NewDispatcherFunc(map[string]func() tools.Server{
-		"execute": execute.Decl(""),
-		"file":    file.Decl,
+		"execute":   execute.Decl(""),
+		"file":      file.Decl,
+		"reasoning": reasoning.Decl(),
 	})
 
 	agentName := os.Getenv("OLLIE_AGENT")
