@@ -79,6 +79,12 @@ func (t *TUI) Run(ctx context.Context) {
 
 	t.split = newSplitInput(tt, tt.Output(), t.core.Prompt(), nil)
 	t.split.onSubmit = func(input string) {
+		if strings.HasPrefix(input, "/q ") {
+			if prompt := strings.TrimSpace(input[3:]); prompt != "" {
+				t.core.Queue(prompt)
+			}
+			return
+		}
 		t.core.Inject(input)
 	}
 
