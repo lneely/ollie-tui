@@ -105,7 +105,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "session: %s\n", sessionID)
 	}
 
-	env.Hooks.Run(agent.HookAgentSpawn)
+	env.Hooks.Run(context.Background(), agent.HookAgentSpawn, nil)
 
 	if *promptFlag != "" {
 		agentCore.Submit(context.Background(), *promptFlag, tui.MakeOutputFn(os.Stdout))
