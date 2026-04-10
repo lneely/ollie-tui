@@ -31,6 +31,7 @@ type splitInput struct {
 	mu       sync.Mutex
 	prompt   string
 	complete func(fields []string) (completionSet []string, listingSet []string)
+	onSubmit func(input string) // called when user presses Enter during a turn
 
 	width, height int
 	scrollEnd     int
@@ -451,13 +452,18 @@ func (s *splitInput) captureKeys(inputTTY *gotty.TTY, wakeR *os.File) {
 			if len(s.buf) > 0 && s.handleLocalCommandLocked(strings.TrimSpace(string(s.buf))) {
 				break
 			}
-			if len(s.buf) > 0 && len(s.queue) < s.maxQueueRows() {
-				oldBandStart := s.bandStart
-				s.completions = nil
-				s.queue = append(s.queue, string(s.buf))
+			if len(s.buf) > 0 {
+				input := string(s.buf)
 				s.buf = s.buf[:0]
-				s.recalcLayoutLocked()
-				s.redrawLayoutLocked(min(oldBandStart, s.bandStart))
+				s.completions = nil
+				if s.onSubmit != nil {
+					s.mu.Unlock()
+					s.onSubmit(input)
+					s.mu.Lock()
+					if s.active {
+						s.redrawInputLineLocked()
+					}
+				}
 			}
 
 		case token == "\x7f" || token == "\b":

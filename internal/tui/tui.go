@@ -78,6 +78,9 @@ func (t *TUI) Run(ctx context.Context) {
 	ed.SetHistoryCycling(true)
 
 	t.split = newSplitInput(tt, tt.Output(), t.core.Prompt(), nil)
+	t.split.onSubmit = func(input string) {
+		t.core.Inject(input)
+	}
 
 	appCtx, appCancel := context.WithCancelCause(ctx)
 	agent.WatchSignals(appCancel, t.core, os.Stderr)
@@ -149,6 +152,23 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 		return
 	}
 
+	// /q queues a prompt for execution after the current turn.
+	if strings.HasPrefix(input, "/q ") {
+		prompt := strings.TrimSpace(input[3:])
+		if prompt != "" {
+			t.core.Queue(prompt)
+			fmt.Fprintf(os.Stderr, "queued: %s\n", prompt)
+		}
+		return
+	}
+
+	// If the agent is busy, inject the prompt mid-turn.
+	if t.core.IsRunning() {
+		t.core.Inject(input)
+		fmt.Fprintf(os.Stderr, "injected: %s\n", input)
+		return
+	}
+
 	if t.split == nil {
 		t.core.Submit(ctx, input, MakeOutputFn(os.Stdout))
 		return
@@ -163,17 +183,6 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 
 	handler := MakeOutputFn(out)
 	t.core.Submit(ctx, input, handler)
-
-	for ctx.Err() == nil {
-		q, ok := t.split.PopQueue()
-		if !ok {
-			break
-		}
-		t.split.SetPrompt(t.core.Prompt())
-		t.split.EchoQueuedInput(q)
-		t.history.entries = append(t.history.entries, q)
-		t.core.Submit(ctx, q, handler)
-	}
 
 	_, pending := t.split.Exit()
 	if pending != "" {
