@@ -79,7 +79,7 @@ func main() {
 
 	var initialSession *agent.Session
 	if len(resumeMessages) > 0 {
-		initialSession = agent.RestoreSession(resumeMessages, env.CtxOverhead)
+		initialSession = agent.RestoreSession(resumeMessages)
 	}
 
 	agentCore := agent.NewAgentCore(agent.AgentCoreConfig{
