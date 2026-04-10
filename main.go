@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"time"
 
 	"ollie/pkg/agent"
 	"ollie/pkg/backend"
@@ -24,9 +22,8 @@ func main() {
 	flag.Parse()
 	extraArgs := flag.Args()
 
-	home, _ := os.UserHomeDir()
-	agentsDir := home + "/.config/ollie/agents"
-	sessionsDir := home + "/.config/ollie/sessions"
+	agentsDir := agent.DefaultAgentsDir()
+	sessionsDir := agent.DefaultSessionsDir()
 	if err := os.MkdirAll(sessionsDir, 0700); err != nil {
 		fmt.Fprintln(os.Stderr, "sessions dir:", err)
 		os.Exit(1)
@@ -42,23 +39,17 @@ func main() {
 		be.SetModel(modelName)
 	}
 
-	builtinExec := execute.New(
-		home+"/.local/state/ollie",
-		home+"/.cache/ollie/exec",
-	)
-	newDispatcher := func() tools.Dispatcher {
-		d := tools.NewDispatcher()
-		d.AddServer("execute", builtinExec)
-		d.AddServer("file", file.New())
-		return d
-	}
+	newDispatcher := tools.NewDispatcherFunc(map[string]func() tools.Server{
+		"execute": execute.Decl,
+		"file":    file.Decl,
+	})
 
 	agentName := os.Getenv("OLLIE_AGENT")
 	if agentName == "" {
 		agentName = "default"
 	}
 
-	sessionID := newSessionID()
+	sessionID := agent.NewSessionID()
 	var resumeMessages []backend.Message
 	if *sessionFlag != "" {
 		sessionPath := sessionsDir + "/" + *sessionFlag + ".json"
@@ -82,7 +73,7 @@ func main() {
 		agentName = extraArgs[0]
 	}
 
-	cfgPath := agentConfigPath(agentsDir, agentName)
+	cfgPath := agent.AgentConfigPath(agentsDir, agentName)
 	cfg, cfgErr := config.Load(cfgPath)
 	env := agent.BuildAgentEnv(cfg, newDispatcher())
 
@@ -124,20 +115,4 @@ func main() {
 	tui.New(agentCore).Run(context.Background())
 }
 
-func newSessionID() string {
-	b := make([]byte, 3)
-	rand.Read(b) //nolint:errcheck
-	return time.Now().Format("20060102-150405") + "-" + fmt.Sprintf("%06x", b)
-}
 
-func agentConfigPath(agentsDir, name string) string {
-	p := agentsDir + "/" + name + ".json"
-	if _, err := os.Stat(p); err == nil {
-		return p
-	}
-	if name == "default" {
-		home, _ := os.UserHomeDir()
-		return home + "/.config/ollie/config.json"
-	}
-	return p
-}
