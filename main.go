@@ -40,7 +40,7 @@ func main() {
 	}
 
 	newDispatcher := tools.NewDispatcherFunc(map[string]func() tools.Server{
-		"execute": execute.Decl,
+		"execute": execute.Decl(""),
 		"file":    file.Decl,
 	})
 
@@ -75,7 +75,7 @@ func main() {
 
 	cfgPath := agent.AgentConfigPath(agentsDir, agentName)
 	cfg, cfgErr := config.Load(cfgPath)
-	env := agent.BuildAgentEnv(cfg, newDispatcher())
+	env := agent.BuildAgentEnv(cfg, newDispatcher(), "")
 
 	var initialSession *agent.Session
 	if len(resumeMessages) > 0 {
