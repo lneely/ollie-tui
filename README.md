@@ -8,7 +8,7 @@ ollie-tui started as a direct integration with the ollie library — a way to ve
 
 Once that proved out, the question became whether the same TUI could be built entirely against the [ollie-9p](https://github.com/lneely/ollie-9p) filesystem interface — with no knowledge of ollie's internals, no SDK, no event types. The answer is yes. The current implementation uses only the Go standard library for its ollie integration: plain `os.WriteFile` to submit prompts and `os.Read` in a poll loop to tail the chat log.
 
-The point is not the TUI itself. It is that a real, interactive client — with readline, split input, mid-turn queueing, interrupt handling — can be built on top of a 9P filesystem with no more machinery than a shell script would use. The filesystem interface is not a simplified view of the API; it is sufficient on its own.
+The point is not the TUI itself. It is that a real, interactive client — with readline, split input, mid-turn queueing, interrupt handling — can be built on top of a 9P filesystem with no more machinery than a shell script would use. The filesystem interface is not a simplified view of the API; it is sufficient on its own. The result: a sub-200 line entrypoint and integration layer, with the bulk of the code and the entire dependency footprint concentrated where they belong — the user interface.
 
 ## Prerequisites
 
