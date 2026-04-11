@@ -37,10 +37,11 @@ func (h *recentHistory) At(i int) string {
 
 // TUI is the terminal frontend. It drives an ollie-9p session via file I/O.
 type TUI struct {
-	sess    *session.Session
-	split   *splitInput
-	history recentHistory
-	chatOff int64 // current read offset in the chat file
+	sess      *session.Session
+	appCancel context.CancelCauseFunc
+	split     *splitInput
+	history   recentHistory
+	chatOff   int64 // current read offset in the chat file
 }
 
 // New creates a TUI backed by the given session.
@@ -95,6 +96,7 @@ func (t *TUI) Run(ctx context.Context) {
 	}
 
 	appCtx, appCancel := context.WithCancelCause(ctx)
+	t.appCancel = appCancel
 	defer appCancel(nil)
 
 	// SIGTERM cancels the context; SIGINT interrupts a running turn.
@@ -174,6 +176,14 @@ func (t *TUI) Run(ctx context.Context) {
 }
 
 func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multiline.Editor) {
+	if input == "/kill" {
+		if err := t.sess.Kill(); err != nil {
+			fmt.Fprintln(os.Stderr, "kill:", err)
+		}
+		t.appCancel(fmt.Errorf("session killed"))
+		return
+	}
+
 	if cmd, ok, err := parseQueuedCommandLine(input); ok {
 		var msg string
 		if err != nil {

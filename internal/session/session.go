@@ -39,6 +39,15 @@ func listSessionIDs(mount string) ([]string, error) {
 	return ids, nil
 }
 
+// Attach returns a Session for an existing session ID, verifying it exists.
+func Attach(mount, id string) (*Session, error) {
+	info, err := os.Stat(filepath.Join(mount, "s", id))
+	if err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("session not found: %s", id)
+	}
+	return &Session{Mount: mount, ID: id}, nil
+}
+
 // Create creates a new session by writing to the root ctl file and waiting
 // for the corresponding directory to appear under s/. opts may contain
 // backend, model, agent, and workdir values; empty values are omitted.
