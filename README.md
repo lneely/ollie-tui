@@ -31,10 +31,10 @@ Installs the `ollie` binary to `~/bin`.
 ## Usage
 
 ```
-ollie [--mount <path>] [--backend <name>] [--model <name>] [--agent <name>] [--workdir <path>]
+ollie [--mount <path>] [--backend <name>] [--model <name>] [--agent <name>] [--workdir <path>] [--new] [--resume] [--session <id>]
 ```
 
-On startup, a new session is created and its ID is printed to stderr. On exit, the session is destroyed.
+By default, ollie tries to resume the last session. If there is no last session or it no longer exists, a new session is created.
 
 | Flag | Description |
 |------|-------------|
@@ -43,7 +43,9 @@ On startup, a new session is created and its ID is printed to stderr. On exit, t
 | `--model` | model for the new session (e.g. `qwen3:8b`) |
 | `--agent` | agent config to load |
 | `--workdir` | working directory for tool execution and system prompt |
-
+| `--new` | force creation of a new session |
+| `--resume` | attach to the last session (fail if none exists) |
+| `--session` | attach to an existing session by ID |
 ## UI
 
 - **Enter** — submit prompt
