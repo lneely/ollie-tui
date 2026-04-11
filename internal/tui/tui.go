@@ -91,8 +91,7 @@ func (t *TUI) Run(ctx context.Context) {
 			}
 			return
 		}
-		// Mid-turn input is queued for after the current turn.
-		t.sess.Queue(input) //nolint:errcheck
+		t.sess.Submit(input) //nolint:errcheck
 	}
 
 	appCtx, appCancel := context.WithCancelCause(ctx)
@@ -212,8 +211,7 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 	}
 
 	if !t.sess.IsIdle() {
-		t.sess.Queue(input) //nolint:errcheck
-		fmt.Fprintf(os.Stderr, "queued: %s\n", input)
+		t.sess.Submit(input) //nolint:errcheck
 		return
 	}
 
