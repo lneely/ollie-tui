@@ -6,15 +6,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	multiline "github.com/hymkor/go-multiline-ny"
 	gotty "github.com/mattn/go-tty"
 	readline "github.com/nyaosorg/go-readline-ny"
 
-	"ollie/pkg/agent"
+	"ollie-tui/internal/session"
 )
+
+const ctrlCExitWindow = 2 * time.Second
 
 // recentHistory implements readline.IHistory for the multiline editor.
 type recentHistory struct {
@@ -31,16 +35,17 @@ func (h *recentHistory) At(i int) string {
 	return ""
 }
 
-// TUI is the terminal frontend. It owns all TUI state and drives a Core.
+// TUI is the terminal frontend. It drives an ollie-9p session via file I/O.
 type TUI struct {
-	core    agent.Core
+	sess    *session.Session
 	split   *splitInput
 	history recentHistory
+	chatOff int64 // current read offset in the chat file
 }
 
-// New creates a TUI backed by the given Core.
-func New(c agent.Core) *TUI {
-	return &TUI{core: c}
+// New creates a TUI backed by the given session.
+func New(sess *session.Session) *TUI {
+	return &TUI{sess: sess}
 }
 
 // Run starts the interactive readline loop, blocking until the user exits.
@@ -62,7 +67,7 @@ func (t *TUI) Run(ctx context.Context) {
 
 	ed.SetPrompt(func(w io.Writer, lnum int) (int, error) {
 		if lnum == 0 {
-			return fmt.Fprint(w, t.core.Prompt())
+			return fmt.Fprint(w, t.sess.Prompt())
 		}
 		return fmt.Fprint(w, "... ")
 	})
@@ -77,19 +82,44 @@ func (t *TUI) Run(ctx context.Context) {
 	ed.SetHistory(&t.history)
 	ed.SetHistoryCycling(true)
 
-	t.split = newSplitInput(tt, tt.Output(), t.core.Prompt(), nil)
+	t.split = newSplitInput(tt, tt.Output(), t.sess.Prompt(), nil)
 	t.split.onSubmit = func(input string) {
 		if strings.HasPrefix(input, "/q ") {
 			if prompt := strings.TrimSpace(input[3:]); prompt != "" {
-				t.core.Queue(prompt)
+				t.sess.Queue(prompt) //nolint:errcheck
 			}
 			return
 		}
-		t.core.Inject(input)
+		// Mid-turn input is queued for after the current turn.
+		t.sess.Queue(input) //nolint:errcheck
 	}
 
 	appCtx, appCancel := context.WithCancelCause(ctx)
-	agent.WatchSignals(appCancel, t.core, os.Stderr)
+	defer appCancel(nil)
+
+	// SIGTERM cancels the context; SIGINT interrupts a running turn.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		defer signal.Stop(sigCh)
+		for {
+			select {
+			case <-appCtx.Done():
+				return
+			case sig, ok := <-sigCh:
+				if !ok {
+					return
+				}
+				if sig == syscall.SIGTERM {
+					appCancel(fmt.Errorf("signal: terminated"))
+					return
+				}
+				if !t.sess.IsIdle() {
+					t.sess.Interrupt() //nolint:errcheck
+				}
+			}
+		}
+	}()
 
 	var lastCtrlC time.Time
 	firstRead := true
@@ -110,7 +140,7 @@ func (t *TUI) Run(ctx context.Context) {
 			errs := err.Error()
 			if errs == "interrupted" || errs == "^C" {
 				now := time.Now()
-				if !lastCtrlC.IsZero() && now.Sub(lastCtrlC) <= agent.CtrlCExitWindow {
+				if !lastCtrlC.IsZero() && now.Sub(lastCtrlC) <= ctrlCExitWindow {
 					break
 				}
 				lastCtrlC = now
@@ -132,7 +162,7 @@ func (t *TUI) Run(ctx context.Context) {
 
 		if len(lines) == 1 {
 			if w, _, err := tt.Size(); err == nil {
-				prompt := t.core.Prompt()
+				prompt := t.sess.Prompt()
 				if shouldRerenderSubmittedSingleLine(prompt, input, w) {
 					rerenderSubmittedSingleLine(tt.Output(), prompt, input)
 				}
@@ -144,7 +174,6 @@ func (t *TUI) Run(ctx context.Context) {
 }
 
 func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multiline.Editor) {
-	// /queued is TUI-specific: it manipulates the split input queue.
 	if cmd, ok, err := parseQueuedCommandLine(input); ok {
 		var msg string
 		if err != nil {
@@ -158,37 +187,34 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 		return
 	}
 
-	// /q queues a prompt for execution after the current turn.
 	if strings.HasPrefix(input, "/q ") {
 		prompt := strings.TrimSpace(input[3:])
 		if prompt != "" {
-			t.core.Queue(prompt)
+			t.sess.Queue(prompt) //nolint:errcheck
 			fmt.Fprintf(os.Stderr, "queued: %s\n", prompt)
 		}
 		return
 	}
 
-	// If the agent is busy, inject the prompt mid-turn.
-	if t.core.IsRunning() {
-		t.core.Inject(input)
-		fmt.Fprintf(os.Stderr, "injected: %s\n", input)
+	if !t.sess.IsIdle() {
+		t.sess.Queue(input) //nolint:errcheck
+		fmt.Fprintf(os.Stderr, "queued: %s\n", input)
 		return
 	}
 
 	if t.split == nil {
-		t.core.Submit(ctx, input, MakeOutputFn(os.Stdout))
+		t.submitAndWait(ctx, input, os.Stdout)
 		return
 	}
 
-	t.split.SetPrompt(t.core.Prompt())
+	t.split.SetPrompt(t.sess.Prompt())
 	wrapper := t.split.Enter()
 	out := io.Writer(os.Stdout)
 	if wrapper != nil {
 		out = wrapper
 	}
 
-	handler := MakeOutputFn(out)
-	t.core.Submit(ctx, input, handler)
+	t.submitAndWait(ctx, input, out)
 
 	_, pending := t.split.Exit()
 	if pending != "" {
@@ -196,43 +222,65 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 	}
 }
 
-// MakeOutputFn returns an EventHandler that renders events as text to out.
-// This is the TUI's bridge from typed events to terminal output.
-func MakeOutputFn(out io.Writer) agent.EventHandler {
-	return func(em agent.Event) {
-		switch em.Role {
-		case "assistant":
-			fmt.Fprint(out, em.Content)
-		case "call":
-			args := squashWhitespace(em.Content)
-			if len(args) > 500 {
-				args = args[:500] + "..."
+// submitAndWait writes the prompt to the session and tails the chat file,
+// writing new bytes to out, until the agent returns to idle.
+func (t *TUI) submitAndWait(ctx context.Context, input string, out io.Writer) {
+	if err := t.sess.Submit(input); err != nil {
+		fmt.Fprintln(os.Stderr, "submit:", err)
+		return
+	}
+
+	f, err := os.Open(t.sess.ChatPath())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "open chat:", err)
+		waitIdle(ctx, t.sess)
+		return
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(t.chatOff, io.SeekStart); err != nil {
+		fmt.Fprintln(os.Stderr, "seek chat:", err)
+	}
+
+	buf := make([]byte, 4096)
+	// Brief grace period for the server to dispatch the write and update state.
+	time.Sleep(150 * time.Millisecond)
+
+	for ctx.Err() == nil {
+		// Drain all available output.
+		for {
+			n, _ := f.Read(buf)
+			if n == 0 {
+				break
 			}
-			fmt.Fprintf(out, "-> %s(%s)\n", em.Name, args)
-		case "tool":
-			s := strings.TrimRight(em.Content, "\n")
-			if len(s) > 500 {
-				s = s[:500] + "..."
-			}
-			fmt.Fprintf(out, "= %s\n", s)
-		case "retry":
-			fmt.Fprintf(out, "retrying in %ss...\n", em.Content)
-		case "error":
-			fmt.Fprintf(out, "error: %s\n", em.Content)
-		case "stalled":
-			fmt.Fprintln(out, "agent stalled")
-		case "info":
-			fmt.Fprint(out, em.Content)
-		case "usage":
-			var in, out2 int
-			fmt.Sscanf(em.Content, "%d %d", &in, &out2)
-			total := in + out2
-			if total > 0 {
-				fmt.Fprintf(out, "%d tokens (%d in, %d out)\n", total, in, out2)
-			}
-		case "newline":
-			fmt.Fprintln(out)
+			out.Write(buf[:n]) //nolint:errcheck
+			t.chatOff += int64(n)
 		}
+
+		if t.sess.IsIdle() {
+			// One final drain to catch output written just before state went idle.
+			for {
+				n, _ := f.Read(buf)
+				if n == 0 {
+					break
+				}
+				out.Write(buf[:n]) //nolint:errcheck
+				t.chatOff += int64(n)
+			}
+			break
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// waitIdle polls state until the agent is idle or the context is done.
+func waitIdle(ctx context.Context, sess *session.Session) {
+	for ctx.Err() == nil {
+		if sess.IsIdle() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

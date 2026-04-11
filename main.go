@@ -2,119 +2,42 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 
-	"ollie/pkg/agent"
-	"ollie/pkg/backend"
-	"ollie/pkg/config"
-	"ollie/pkg/tools"
-	execute "ollie/pkg/tools/execute"
-	"ollie/pkg/tools/file"
-	"ollie/pkg/tools/reasoning"
+	"ollie-tui/internal/session"
 	"ollie-tui/internal/tui"
 )
 
 func main() {
-	sessionFlag := flag.String("session", "", "resume a session by ID")
-	promptFlag := flag.String("prompt", "", "run a single prompt non-interactively and exit")
+	mountFlag   := flag.String("mount", "", "ollie-9p mount path (default: $OLLIE_9MOUNT or ~/mnt/ollie)")
+	backendFlag := flag.String("backend", "", "backend for new session")
+	modelFlag   := flag.String("model", "", "model for new session")
+	agentFlag   := flag.String("agent", "", "agent for new session")
+	workdirFlag := flag.String("workdir", "", "working directory for new session")
 	flag.Parse()
-	extraArgs := flag.Args()
 
-	agentsDir := agent.DefaultAgentsDir()
-	sessionsDir := agent.DefaultSessionsDir()
-	if err := os.MkdirAll(sessionsDir, 0700); err != nil {
-		fmt.Fprintln(os.Stderr, "sessions dir:", err)
-		os.Exit(1)
+	mount := *mountFlag
+	if mount == "" {
+		mount = session.MountPath()
 	}
 
-	be, err := backend.New()
+	opts := map[string]string{
+		"backend": *backendFlag,
+		"model":   *modelFlag,
+		"agent":   *agentFlag,
+		"workdir": *workdirFlag,
+	}
+
+	sess, err := session.Create(mount, opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "failed to create backend:", err)
+		fmt.Fprintln(os.Stderr, "create session:", err)
 		os.Exit(1)
 	}
+	defer sess.Kill() //nolint:errcheck
 
-	if modelName := os.Getenv("OLLIE_MODEL"); modelName != "" {
-		be.SetModel(modelName)
-	}
+	fmt.Fprintf(os.Stderr, "session: %s\n", sess.ID)
 
-	newDispatcher := tools.NewDispatcherFunc(map[string]func() tools.Server{
-		"execute":   execute.Decl(""),
-		"file":      file.Decl,
-		"reasoning": reasoning.Decl(),
-	})
-
-	agentName := os.Getenv("OLLIE_AGENT")
-	if agentName == "" {
-		agentName = "default"
-	}
-
-	sessionID := agent.NewSessionID()
-	var resumeMessages []backend.Message
-	if *sessionFlag != "" {
-		sessionPath := sessionsDir + "/" + *sessionFlag + ".json"
-		data, readErr := os.ReadFile(sessionPath)
-		if readErr != nil {
-			fmt.Fprintln(os.Stderr, "--session:", readErr)
-			os.Exit(1)
-		}
-		var ps agent.PersistedSession
-		if jsonErr := json.Unmarshal(data, &ps); jsonErr != nil {
-			fmt.Fprintln(os.Stderr, "--session: bad JSON:", jsonErr)
-			os.Exit(1)
-		}
-		sessionID = ps.ID
-		resumeMessages = ps.Messages
-		if ps.Agent != "" && len(extraArgs) == 0 {
-			agentName = ps.Agent
-		}
-	}
-	if len(extraArgs) > 0 {
-		agentName = extraArgs[0]
-	}
-
-	cfgPath := agent.AgentConfigPath(agentsDir, agentName)
-	cfg, cfgErr := config.Load(cfgPath)
-	env := agent.BuildAgentEnv(cfg, newDispatcher(), "")
-
-	var initialSession *agent.Session
-	if len(resumeMessages) > 0 {
-		initialSession = agent.RestoreSession(resumeMessages)
-	}
-
-	agentCore := agent.NewAgentCore(agent.AgentCoreConfig{
-		Backend:     be,
-		AgentName:   agentName,
-		AgentsDir:   agentsDir,
-		SessionsDir: sessionsDir,
-		SessionID:   sessionID,
-		Session:     initialSession,
-		Env:           env,
-		NewDispatcher: newDispatcher,
-	})
-
-	if cfgErr != nil {
-		fmt.Fprintln(os.Stderr, "agent config:", cfgErr)
-	}
-	for _, msg := range env.Messages {
-		fmt.Fprintln(os.Stderr, msg)
-	}
-	if len(resumeMessages) > 0 {
-		fmt.Fprintf(os.Stderr, "session: %s (resumed)\n", sessionID)
-	} else {
-		fmt.Fprintf(os.Stderr, "session: %s\n", sessionID)
-	}
-
-	env.Hooks.Run(context.Background(), agent.HookAgentSpawn, nil)
-
-	if *promptFlag != "" {
-		agentCore.Submit(context.Background(), *promptFlag, tui.MakeOutputFn(os.Stdout))
-		return
-	}
-
-	tui.New(agentCore).Run(context.Background())
+	tui.New(sess).Run(context.Background())
 }
-
-
