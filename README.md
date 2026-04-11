@@ -53,10 +53,6 @@ On startup, a new session is created and its ID is printed to stderr. On exit, t
 
 During a running turn, typed input is queued rather than injected.
 
-## Integrations
-
-**[9beads-mcp](https://github.com/lneely/9beads-mcp)** provides task persistence using **[9beads](https://github.com/lneely/9beads)** — enabling the agent to track, list, and manage tasks across sessions.
-
 ## Credits
 
 Many sources of inspiration:
