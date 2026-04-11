@@ -39,6 +39,34 @@ func listSessionIDs(mount string) ([]string, error) {
 	return ids, nil
 }
 
+// lastSessionPath returns the path to the last-session file.
+func lastSessionPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "ollie", "last-session")
+}
+
+// SaveLastSession writes the session ID to the last-session file.
+func SaveLastSession(id string) error {
+	path := lastSessionPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(id+"\n"), 0600)
+}
+
+// LoadLastSession reads the last-session file and returns the session ID,
+// or an empty string if the file is missing or empty.
+func LoadLastSession() (string, error) {
+	data, err := os.ReadFile(lastSessionPath())
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
 // Attach returns a Session for an existing session ID, verifying it exists.
 func Attach(mount, id string) (*Session, error) {
 	info, err := os.Stat(filepath.Join(mount, "s", id))
