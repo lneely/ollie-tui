@@ -148,6 +148,11 @@ func (s *Session) Interrupt() error {
 	return os.WriteFile(s.path("ctl"), []byte("stop\n"), 0644)
 }
 
+// Control sends a slash command to the session ctl file (e.g. "/cwd /path").
+func (s *Session) Control(cmd string) error {
+	return os.WriteFile(s.path("ctl"), []byte(cmd+"\n"), 0644)
+}
+
 // IsIdle reports whether the agent is currently idle.
 func (s *Session) IsIdle() bool {
 	data, err := os.ReadFile(s.path("state"))

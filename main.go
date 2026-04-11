@@ -19,7 +19,14 @@ func main() {
 	modelFlag   := flag.String("model", "", "model for new session")
 	agentFlag   := flag.String("agent", "", "agent for new session")
 	workdirFlag := flag.String("workdir", "", "working directory for new session")
+	cwdFlag     := flag.String("cwd", "", "set working directory on new session startup (default: $PWD)")
 	flag.Parse()
+
+	cwdExplicit := *cwdFlag != ""
+	cwd := *cwdFlag
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
 
 	mount := *mountFlag
 	if mount == "" {
@@ -30,6 +37,8 @@ func main() {
 		sess *session.Session
 		err  error
 	)
+
+	newSession := false
 
 	switch {
 	case *resumeFlag:
@@ -65,6 +74,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "create session:", err)
 			os.Exit(1)
 		}
+		newSession = true
 		fmt.Fprintf(os.Stderr, "session: %s\n", sess.ID)
 
 	default:
@@ -83,6 +93,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "create session:", err)
 				os.Exit(1)
 			}
+			newSession = true
 			fmt.Fprintf(os.Stderr, "session: %s\n", sess.ID)
 		} else {
 			sess, err = session.Attach(mount, id)
@@ -99,10 +110,17 @@ func main() {
 					fmt.Fprintln(os.Stderr, "create session:", err)
 					os.Exit(1)
 				}
+				newSession = true
 				fmt.Fprintf(os.Stderr, "session: %s\n", sess.ID)
 			} else {
 				fmt.Fprintf(os.Stderr, "session: %s (resumed)\n", sess.ID)
 			}
+		}
+	}
+
+	if newSession || cwdExplicit {
+		if err := sess.Control("/cwd " + cwd); err != nil {
+			fmt.Fprintln(os.Stderr, "set workdir:", err)
 		}
 	}
 
