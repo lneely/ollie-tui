@@ -53,6 +53,16 @@ On startup, a new session is created and its ID is printed to stderr. On exit, t
 
 During a running turn, typed input is queued rather than injected.
 
+## Credits
+
+Many sources of inspiration:
+
+- [Plan 9 from Bell Labs](https://9fans.net) — for an interesting system
+- [@9fans](https://github.com/9fans) — for the Plan 9 port
+- [Suckless](https://suckless.org) — for articulating good software development principles
+- [@simonfxr](https://github.com/simonfxr) — for a solid agent baseline to "borrow" from
+- [@aws](https://github.com/aws/amazon-q-developer-cli) — for a solid open-source agent implementation
+
 ## License
 
 GPLv3
