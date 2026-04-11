@@ -190,6 +190,9 @@ func (s *splitInput) Exit() (queued []string, pending string) {
 	// Don't collect s.buf yet — captureKeys may still be mid-read and about
 	// to add the last typed character to buf before it sees done is closed.
 	s.flushDeferredLFsForExitLocked()
+	if s.outputStarted {
+		s.writeScrollbackSeparatorLocked()
+	}
 
 	fmt.Fprint(s.out, "\033[r")
 	s.clearBandLocked()
@@ -812,7 +815,6 @@ func (w *splitWriter) Write(p []byte) (int, error) {
 		w.s.redrawLayoutLocked(min(oldBandStart, w.s.bandStart))
 	}
 	if len(p) > 0 && !w.s.outputStarted {
-		w.s.writeScrollbackSeparatorLocked()
 		w.s.outputStarted = true
 	}
 	w.s.flushDeferredLFsLocked()
