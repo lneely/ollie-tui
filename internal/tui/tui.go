@@ -132,6 +132,11 @@ func (t *TUI) Run(ctx context.Context) {
 			if _, h, err := tt.Size(); err == nil && h > 0 {
 				clearScreenAndMoveToBottom(tt.Output(), h)
 			}
+			if f, err := os.Open(t.sess.ChatPath()); err == nil {
+				n, _ := io.Copy(os.Stdout, f)
+				t.chatOff = n
+				f.Close()
+			}
 		}
 
 		lines, err := ed.Read(appCtx)
