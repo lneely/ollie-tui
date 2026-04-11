@@ -18,8 +18,8 @@ func main() {
 	backendFlag := flag.String("backend", "", "backend for new session")
 	modelFlag   := flag.String("model", "", "model for new session")
 	agentFlag   := flag.String("agent", "", "agent for new session")
-	workdirFlag := flag.String("workdir", "", "working directory for new session")
-	cwdFlag     := flag.String("cwd", "", "set working directory on new session startup (default: $PWD)")
+	workdirFlag := flag.String("workdir", "", "working directory for new session (default: $PWD)")
+	cwdFlag     := flag.String("cwd", "", "override working directory on startup (default: $PWD for new sessions)")
 	flag.Parse()
 
 	cwdExplicit := *cwdFlag != ""
@@ -34,11 +34,10 @@ func main() {
 	}
 
 	var (
-		sess *session.Session
-		err  error
+		sess    *session.Session
+		err     error
+		created bool
 	)
-
-	newSession := false
 
 	switch {
 	case *resumeFlag:
@@ -63,54 +62,33 @@ func main() {
 		fmt.Fprintf(os.Stderr, "session: %s (resumed)\n", sess.ID)
 
 	case *newFlag:
-		opts := map[string]string{
-			"backend": *backendFlag,
-			"model":   *modelFlag,
-			"agent":   *agentFlag,
-			"workdir": *workdirFlag,
-		}
-		sess, err = session.Create(mount, opts)
+		sess, err = session.Create(mount, sessionOpts(*backendFlag, *modelFlag, *agentFlag, *workdirFlag, cwd))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "create session:", err)
 			os.Exit(1)
 		}
-		newSession = true
+		created = true
 		fmt.Fprintf(os.Stderr, "session: %s\n", sess.ID)
 
 	default:
-		// Try to resume last session by default
 		id, loadErr := session.LoadLastSession()
 		if loadErr != nil || id == "" {
-			// No last session, create a new one
-			opts := map[string]string{
-				"backend": *backendFlag,
-				"model":   *modelFlag,
-				"agent":   *agentFlag,
-				"workdir": *workdirFlag,
-			}
-			sess, err = session.Create(mount, opts)
+			sess, err = session.Create(mount, sessionOpts(*backendFlag, *modelFlag, *agentFlag, *workdirFlag, cwd))
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "create session:", err)
 				os.Exit(1)
 			}
-			newSession = true
+			created = true
 			fmt.Fprintf(os.Stderr, "session: %s\n", sess.ID)
 		} else {
 			sess, err = session.Attach(mount, id)
 			if err != nil {
-				// Last session no longer exists, create a new one
-				opts := map[string]string{
-					"backend": *backendFlag,
-					"model":   *modelFlag,
-					"agent":   *agentFlag,
-					"workdir": *workdirFlag,
-				}
-				sess, err = session.Create(mount, opts)
+				sess, err = session.Create(mount, sessionOpts(*backendFlag, *modelFlag, *agentFlag, *workdirFlag, cwd))
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "create session:", err)
 					os.Exit(1)
 				}
-				newSession = true
+				created = true
 				fmt.Fprintf(os.Stderr, "session: %s\n", sess.ID)
 			} else {
 				fmt.Fprintf(os.Stderr, "session: %s (resumed)\n", sess.ID)
@@ -118,14 +96,29 @@ func main() {
 		}
 	}
 
-	if newSession || cwdExplicit {
+	// For resumed/attached sessions, apply -cwd only when explicitly given.
+	// New sessions already have the workdir set via sessionOpts.
+	if cwdExplicit && !created {
 		if err := sess.Control("/cwd " + cwd); err != nil {
 			fmt.Fprintln(os.Stderr, "set workdir:", err)
 		}
 	}
 
-	// Track the most recently used session for --resume.
 	session.SaveLastSession(sess.ID) //nolint:errcheck
 
 	tui.New(sess).Run(context.Background())
+}
+
+// sessionOpts builds the opts map for session.Create. workdir defaults to cwd
+// (the TUI's $PWD) if not explicitly given via -workdir.
+func sessionOpts(backend, model, agent, workdir, cwd string) map[string]string {
+	if workdir == "" {
+		workdir = cwd
+	}
+	return map[string]string{
+		"backend": backend,
+		"model":   model,
+		"agent":   agent,
+		"workdir": workdir,
+	}
 }
