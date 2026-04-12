@@ -256,6 +256,7 @@ func (t *TUI) submitAndWait(ctx context.Context, input string, out io.Writer) {
 	}
 
 	buf := make([]byte, 4096)
+	cw := newDiffColorWriter(out)
 	// Brief grace period for the server to dispatch the write and update state.
 	time.Sleep(150 * time.Millisecond)
 
@@ -266,7 +267,7 @@ func (t *TUI) submitAndWait(ctx context.Context, input string, out io.Writer) {
 			if n == 0 {
 				break
 			}
-			out.Write(buf[:n]) //nolint:errcheck
+			cw.Write(buf[:n]) //nolint:errcheck
 			t.chatOff += int64(n)
 		}
 
@@ -277,9 +278,10 @@ func (t *TUI) submitAndWait(ctx context.Context, input string, out io.Writer) {
 				if n == 0 {
 					break
 				}
-				out.Write(buf[:n]) //nolint:errcheck
+				cw.Write(buf[:n]) //nolint:errcheck
 				t.chatOff += int64(n)
 			}
+			cw.Flush()
 			break
 		}
 
