@@ -132,7 +132,9 @@ func (t *TUI) Run(ctx context.Context) {
 				clearScreenAndMoveToBottom(tt.Output(), h)
 			}
 			if f, err := os.Open(t.sess.ChatPath()); err == nil {
-				n, _ := io.Copy(os.Stdout, f)
+				cw := newDiffColorWriter(os.Stdout)
+				n, _ := io.Copy(cw, f)
+				cw.Flush()
 				t.chatOff = n
 				f.Close()
 			}
