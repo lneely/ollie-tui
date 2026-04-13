@@ -182,11 +182,31 @@ func (t *TUI) Run(ctx context.Context) {
 }
 
 func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multiline.Editor) {
+	if strings.HasPrefix(input, `\`) {
+		t.handleFrontendCmd(input[1:])
+		return
+	}
+
 	if input == "/kill" {
 		if err := t.sess.Kill(); err != nil {
 			fmt.Fprintln(os.Stderr, "kill:", err)
+			return
 		}
 		t.appCancel(fmt.Errorf("session killed"))
+		return
+	}
+
+	if strings.HasPrefix(input, "/rn ") {
+		name := strings.TrimSpace(input[4:])
+		if name == "" {
+			fmt.Fprintln(os.Stderr, "usage: /rn <new-name>")
+			return
+		}
+		if err := t.sess.Rename(name); err != nil {
+			fmt.Fprintln(os.Stderr, "rename:", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "renamed session to: %s\n", name)
 		return
 	}
 
@@ -298,6 +318,30 @@ func waitIdle(ctx context.Context, sess *session.Session) {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// handleFrontendCmd processes `\` commands (frontend-local operations).
+func (t *TUI) handleFrontendCmd(cmd string) {
+	name, arg, _ := strings.Cut(cmd, " ")
+	arg = strings.TrimSpace(arg)
+	switch name {
+	case "switch":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, `usage: \switch <session-id>`)
+			return
+		}
+		newSess, err := session.Attach(t.sess.Mount, arg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "switch:", err)
+			return
+		}
+		t.sess = newSess
+		t.chatOff = 0
+		session.SaveLastSession(arg) //nolint:errcheck
+		fmt.Fprintf(os.Stderr, "switched to session: %s\n", arg)
+	default:
+		fmt.Fprintln(os.Stderr, `\switch <id>  switch session`)
 	}
 }
 

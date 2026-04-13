@@ -160,3 +160,16 @@ func (s *Session) IsIdle() bool {
 	}
 	return strings.TrimSpace(string(data)) == "idle"
 }
+
+// Rename changes the session's directory name via os.Rename (wstat on 9P).
+// Updates the in-memory ID and the last-session file on success.
+func (s *Session) Rename(newName string) error {
+	oldDir := filepath.Join(s.Mount, "s", s.ID)
+	newDir := filepath.Join(s.Mount, "s", newName)
+	if err := os.Rename(oldDir, newDir); err != nil {
+		return err
+	}
+	s.ID = newName
+	SaveLastSession(newName) //nolint:errcheck
+	return nil
+}
