@@ -142,8 +142,8 @@ func (s *Session) Queue(text string) error {
 	return os.WriteFile(s.path("enqueue"), []byte(text), 0644)
 }
 
-// Interrupt sends a stop signal to the session.
-func (s *Session) Interrupt() error {
+// Stop sends a stop signal to the session.
+func (s *Session) Stop() error {
 	return os.WriteFile(s.path("ctl"), []byte("stop\n"), 0644)
 }
 

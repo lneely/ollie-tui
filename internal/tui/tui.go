@@ -116,7 +116,7 @@ func (t *TUI) Run(ctx context.Context) {
 					return
 				}
 				if !t.sess.IsIdle() {
-					t.sess.Interrupt() //nolint:errcheck
+					t.sess.Stop() //nolint:errcheck
 				}
 			}
 		}
