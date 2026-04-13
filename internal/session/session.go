@@ -76,7 +76,7 @@ func Attach(mount, id string) (*Session, error) {
 	return &Session{Mount: mount, ID: id}, nil
 }
 
-// Create creates a new session by writing to the root ctl file and waiting
+// Create creates a new session by writing KV pairs to s/new and waiting
 // for the corresponding directory to appear under s/. opts may contain
 // backend, model, agent, and workdir values; empty values are omitted.
 func Create(mount string, opts map[string]string) (*Session, error) {
@@ -90,17 +90,16 @@ func Create(mount string, opts map[string]string) (*Session, error) {
 	}
 
 	var cmd strings.Builder
-	cmd.WriteString("new")
 	for _, k := range []string{"backend", "model", "agent", "workdir"} {
 		if v := opts[k]; v != "" {
-			cmd.WriteByte(' ')
 			cmd.WriteString(k)
 			cmd.WriteByte('=')
 			cmd.WriteString(v)
+			cmd.WriteByte('\n')
 		}
 	}
-	if err := os.WriteFile(filepath.Join(mount, "ctl"), []byte(cmd.String()+"\n"), 0644); err != nil {
-		return nil, fmt.Errorf("write ctl: %w", err)
+	if err := os.WriteFile(filepath.Join(mount, "s", "new"), []byte(cmd.String()), 0644); err != nil {
+		return nil, fmt.Errorf("write s/new: %w", err)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -118,9 +117,9 @@ func Create(mount string, opts map[string]string) (*Session, error) {
 	return nil, errors.New("timeout waiting for new session")
 }
 
-// Kill destroys the session by writing to the root ctl file.
+// Kill destroys the session by removing its directory.
 func (s *Session) Kill() error {
-	return os.WriteFile(filepath.Join(s.Mount, "ctl"), []byte("kill "+s.ID+"\n"), 0644)
+	return os.Remove(filepath.Join(s.Mount, "s", s.ID))
 }
 
 func (s *Session) path(name string) string {
