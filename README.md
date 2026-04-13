@@ -31,7 +31,7 @@ Installs the `ollie` binary to `~/bin`.
 ## Usage
 
 ```
-ollie [--mount <path>] [--backend <name>] [--model <name>] [--agent <name>] [--workdir <path>] [--new] [--resume] [--session <id>]
+ollie [--mount <path>] [--backend <name>] [--model <name>] [--agent <name>] [--cwd <path>] [--new] [--resume] [--session <id>]
 ```
 
 By default, ollie tries to resume the last session. If there is no last session or it no longer exists, a new session is created.
@@ -42,7 +42,7 @@ By default, ollie tries to resume the last session. If there is no last session 
 | `--backend` | backend for the new session (e.g. `ollama`) |
 | `--model` | model for the new session (e.g. `qwen3:8b`) |
 | `--agent` | agent config to load |
-| `--workdir` | working directory for tool execution and system prompt |
+| `--cwd` | working directory for tool execution and system prompt |
 | `--new` | force creation of a new session |
 | `--resume` | attach to the last session (fail if none exists) |
 | `--session` | attach to an existing session by ID |

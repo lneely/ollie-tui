@@ -78,7 +78,7 @@ func Attach(mount, id string) (*Session, error) {
 
 // Create creates a new session by writing KV pairs to s/new and waiting
 // for the corresponding directory to appear under s/. opts may contain
-// backend, model, agent, and workdir values; empty values are omitted.
+// backend, model, agent, and cwd values; empty values are omitted.
 func Create(mount string, opts map[string]string) (*Session, error) {
 	before, err := listSessionIDs(mount)
 	if err != nil {
@@ -90,7 +90,7 @@ func Create(mount string, opts map[string]string) (*Session, error) {
 	}
 
 	var cmd strings.Builder
-	for _, k := range []string{"backend", "model", "agent", "workdir"} {
+	for _, k := range []string{"backend", "model", "agent", "cwd"} {
 		if v := opts[k]; v != "" {
 			cmd.WriteString(k)
 			cmd.WriteByte('=')
