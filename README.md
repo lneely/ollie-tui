@@ -55,6 +55,10 @@ By default, ollie tries to resume the last session. If there is no last session 
 
 During a running turn, typed input is queued rather than injected.
 
+## State changes while the agent is running
+
+Commands that mutate session state — `/backend`, `/agent`, `/model`, `/compact`, `/clear` — are rejected while the agent is running. Wait for the turn to complete (check that `state` reads `idle`) before switching backends, models, or agents. Read-only variants (e.g. `/backend` with no argument) work at any time.
+
 ## License
 
 GPLv3
