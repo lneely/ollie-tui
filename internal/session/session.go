@@ -161,6 +161,15 @@ func (s *Session) IsIdle() bool {
 	return strings.TrimSpace(string(data)) == "idle"
 }
 
+// SystemPrompt returns the fully rendered system prompt for this session.
+func (s *Session) SystemPrompt() (string, error) {
+	data, err := os.ReadFile(s.path("systemprompt"))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // Rename changes the session's directory name via os.Rename (wstat on 9P).
 // Updates the in-memory ID and the last-session file on success.
 func (s *Session) Rename(newName string) error {

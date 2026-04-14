@@ -196,6 +196,16 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 		return
 	}
 
+	if input == "/sp" {
+		sp, err := t.sess.SystemPrompt()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "sp:", err)
+			return
+		}
+		fmt.Print(sp)
+		return
+	}
+
 	if strings.HasPrefix(input, "/rn ") {
 		name := strings.TrimSpace(input[4:])
 		if name == "" {
