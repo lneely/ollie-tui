@@ -78,12 +78,15 @@ func (w *diffColorWriter) writeLine(line string) {
 }
 
 func (w *diffColorWriter) writeDiffLine(line string) {
+	// file_edit emits ＋ (U+FF0B) and − (U+2212) as the leading byte of diff
+	// lines so that only these explicit markers trigger coloring, not incidental
+	// ASCII +/- in command output (e.g. ls -la permissions).
 	switch {
-	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+	case strings.HasPrefix(line, "＋++") || strings.HasPrefix(line, "−--"):
 		io.WriteString(w.out, ansiDim+line+ansiReset) //nolint:errcheck
-	case strings.HasPrefix(line, "+"):
+	case strings.HasPrefix(line, "＋"):
 		io.WriteString(w.out, ansiGreen+line+ansiReset) //nolint:errcheck
-	case strings.HasPrefix(line, "-"):
+	case strings.HasPrefix(line, "−"):
 		io.WriteString(w.out, ansiRed+line+ansiReset) //nolint:errcheck
 	case strings.HasPrefix(line, "@@"):
 		io.WriteString(w.out, ansiCyan+line+ansiReset) //nolint:errcheck
