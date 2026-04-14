@@ -202,7 +202,7 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 			fmt.Fprintln(os.Stderr, "sp:", err)
 			return
 		}
-		fmt.Print(sp)
+		fmt.Println(sp)
 		return
 	}
 
