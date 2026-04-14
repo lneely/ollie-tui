@@ -52,6 +52,8 @@ By default, ollie tries to resume the last session. If there is no last session 
 - **Ctrl+J** — insert newline
 - **Ctrl+C** — interrupt running turn; press twice to exit
 - `/q <prompt>` — queue a prompt for execution after the current turn
+- `/sp` — print the fully rendered system prompt for this session
+- `!<cmd>` — run a shell command in the session's working directory
 
 During a running turn, typed input is queued rather than injected.
 
