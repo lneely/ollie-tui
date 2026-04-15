@@ -208,7 +208,7 @@ func (s *Session) Control(cmd string) error {
 func (s *Session) IsIdle() bool {
 	data, err := os.ReadFile(s.path("state"))
 	if err != nil {
-		return true
+		return false
 	}
 	return strings.TrimSpace(string(data)) == "idle"
 }

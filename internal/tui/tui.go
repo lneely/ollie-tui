@@ -182,9 +182,10 @@ func (t *TUI) Run(ctx context.Context) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			// chatGrew interrupted the read — print a newline to close the
-			// partial prompt line, then tail until the session is idle again.
-			if errors.Is(err, context.Canceled) && appCtx.Err() == nil {
+			// If the per-read context was cancelled by the watcher (chatGrew)
+			// but the app is still alive, drain and continue regardless of the
+			// specific error type returned by the readline library.
+			if readCtx.Err() != nil && appCtx.Err() == nil {
 				fmt.Fprintln(os.Stdout)
 				t.tailUntilIdle(appCtx, os.Stdout)
 				continue
