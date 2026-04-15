@@ -40,7 +40,7 @@ func main() {
 
 	switch {
 	case *resumeFlag:
-		id, loadErr := session.LoadLastSession()
+		id, loadErr := session.LoadLastSession(cwd)
 		if loadErr != nil || id == "" {
 			fmt.Fprintln(os.Stderr, "no last session")
 			os.Exit(1)
@@ -70,7 +70,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "session: %s\n", sess.ID)
 
 	default:
-		id, loadErr := session.LoadLastSession()
+		id, loadErr := session.LoadLastSession(cwd)
 		if loadErr != nil || id == "" {
 			sess, err = session.Create(mount, sessionOpts(*backendFlag, *modelFlag, *agentFlag, cwd))
 			if err != nil {
@@ -103,7 +103,7 @@ func main() {
 		}
 	}
 
-	session.SaveLastSession(sess.ID) //nolint:errcheck
+	session.SaveLastSession(cwd, sess.ID) //nolint:errcheck
 
 	tui.New(sess).Run(context.Background())
 }

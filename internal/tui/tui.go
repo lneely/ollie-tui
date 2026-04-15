@@ -348,7 +348,8 @@ func (t *TUI) handleFrontendCmd(cmd string) {
 		}
 		t.sess = newSess
 		t.chatOff = 0
-		session.SaveLastSession(arg) //nolint:errcheck
+		cwd, _ := os.Getwd()
+		session.SaveLastSession(cwd, arg) //nolint:errcheck
 		fmt.Fprintf(os.Stderr, "switched to session: %s\n", arg)
 	default:
 		fmt.Fprintln(os.Stderr, `\switch <id>  switch session`)

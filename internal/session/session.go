@@ -45,26 +45,78 @@ func lastSessionPath() string {
 	return filepath.Join(home, ".config", "ollie", "last-session")
 }
 
-// SaveLastSession writes the session ID to the last-session file.
-func SaveLastSession(id string) error {
+// readLastSessionLines reads the last-session file and returns non-empty lines.
+func readLastSessionLines(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
+}
+
+// SaveLastSession upserts the {cwd}\t{id} entry for the given working directory.
+func SaveLastSession(cwd, id string) error {
 	path := lastSessionPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(id+"\n"), 0600)
+	lines, _ := readLastSessionLines(path)
+	found := false
+	for i, line := range lines {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 && parts[0] == cwd {
+			lines[i] = cwd + "\t" + id
+			found = true
+			break
+		}
+	}
+	if !found {
+		lines = append(lines, cwd+"\t"+id)
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600)
 }
 
-// LoadLastSession reads the last-session file and returns the session ID,
-// or an empty string if the file is missing or empty.
-func LoadLastSession() (string, error) {
-	data, err := os.ReadFile(lastSessionPath())
-	if os.IsNotExist(err) {
+// LoadLastSession returns the session ID for the given cwd, or "" if not found.
+func LoadLastSession(cwd string) (string, error) {
+	lines, err := readLastSessionLines(lastSessionPath())
+	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(data)), nil
+	for _, line := range lines {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 && parts[0] == cwd {
+			return strings.TrimSpace(parts[1]), nil
+		}
+	}
+	return "", nil
+}
+
+// updateLastSessionID replaces oldID with newID across all entries (used by Rename).
+func updateLastSessionID(oldID, newID string) error {
+	path := lastSessionPath()
+	lines, err := readLastSessionLines(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for i, line := range lines {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[1]) == oldID {
+			lines[i] = parts[0] + "\t" + newID
+		}
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600)
 }
 
 // Attach returns a Session for an existing session ID, verifying it exists.
@@ -178,7 +230,7 @@ func (s *Session) Rename(newName string) error {
 	if err := os.Rename(oldDir, newDir); err != nil {
 		return err
 	}
+	updateLastSessionID(s.ID, newName) //nolint:errcheck
 	s.ID = newName
-	SaveLastSession(newName) //nolint:errcheck
 	return nil
 }
