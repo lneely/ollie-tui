@@ -122,6 +122,22 @@ func (t *TUI) Run(ctx context.Context) {
 		}
 	}()
 
+	// chatGrew is signalled by a background goroutine when the chat file grows
+	// while we are blocked in ed.Read — i.e. another client is active on this session.
+	chatGrew := make(chan struct{}, 1)
+	go func() {
+		for appCtx.Err() == nil {
+			time.Sleep(100 * time.Millisecond)
+			info, err := os.Stat(t.sess.ChatPath())
+			if err == nil && info.Size() > t.chatOff {
+				select {
+				case chatGrew <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
 	var lastCtrlC time.Time
 	firstRead := true
 
@@ -143,10 +159,35 @@ func (t *TUI) Run(ctx context.Context) {
 			}
 		}
 
-		lines, err := ed.Read(appCtx)
+		// Drain stale signals accumulated while we were in tailUntilIdle/submitAndWait.
+		for len(chatGrew) > 0 {
+			<-chatGrew
+		}
+
+		// Use a per-read context so chatGrew can interrupt ed.Read without
+		// cancelling the whole app.
+		readCtx, readCancel := context.WithCancel(appCtx)
+		go func() {
+			defer readCancel()
+			select {
+			case <-chatGrew:
+			case <-readCtx.Done():
+			}
+		}()
+
+		lines, err := ed.Read(readCtx)
+		readCancel()
+
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
+			}
+			// chatGrew interrupted the read — print a newline to close the
+			// partial prompt line, then tail until the session is idle again.
+			if errors.Is(err, context.Canceled) && appCtx.Err() == nil {
+				fmt.Fprintln(os.Stdout)
+				t.tailUntilIdle(appCtx, os.Stdout)
+				continue
 			}
 			errs := err.Error()
 			if errs == "interrupted" || errs == "^C" {
