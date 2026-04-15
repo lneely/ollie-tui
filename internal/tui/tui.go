@@ -138,6 +138,9 @@ func (t *TUI) Run(ctx context.Context) {
 				t.chatOff = n
 				f.Close()
 			}
+			if !t.sess.IsIdle() {
+				t.tailUntilIdle(appCtx, os.Stdout)
+			}
 		}
 
 		lines, err := ed.Read(appCtx)
@@ -274,7 +277,15 @@ func (t *TUI) submitAndWait(ctx context.Context, input string, out io.Writer) {
 		fmt.Fprintln(os.Stderr, "submit:", err)
 		return
 	}
+	// Brief grace period for the server to dispatch the write and update state.
+	time.Sleep(150 * time.Millisecond)
+	t.tailUntilIdle(ctx, out)
+}
 
+// tailUntilIdle tails the chat file from the current offset, writing new
+// bytes to out, until the session becomes idle. Used both after submitting
+// a prompt and on startup when attaching to an already-running session.
+func (t *TUI) tailUntilIdle(ctx context.Context, out io.Writer) {
 	f, err := os.Open(t.sess.ChatPath())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open chat:", err)
@@ -289,11 +300,8 @@ func (t *TUI) submitAndWait(ctx context.Context, input string, out io.Writer) {
 
 	buf := make([]byte, 4096)
 	cw := newDiffColorWriter(out)
-	// Brief grace period for the server to dispatch the write and update state.
-	time.Sleep(150 * time.Millisecond)
 
 	for ctx.Err() == nil {
-		// Drain all available output.
 		for {
 			n, _ := f.Read(buf)
 			if n == 0 {
