@@ -34,7 +34,7 @@ Installs the `ollie` binary to `~/bin`.
 ollie [--mount <path>] [--backend <name>] [--model <name>] [--agent <name>] [--cwd <path>] [--new] [--resume] [--session <id>]
 ```
 
-By default, ollie tries to resume the last session. If there is no last session or it no longer exists, a new session is created.
+By default, ollie resumes the last session for the current working directory. If no session exists for that directory (or it no longer exists), a new one is created. Each directory tracks its own last session independently.
 
 | Flag | Description |
 |------|-------------|
@@ -44,7 +44,7 @@ By default, ollie tries to resume the last session. If there is no last session 
 | `--agent` | agent config to load |
 | `--cwd` | working directory for tool execution and system prompt |
 | `--new` | force creation of a new session |
-| `--resume` | attach to the last session (fail if none exists) |
+| `--resume` | attach to the last session for `$PWD` (fail if none exists) |
 | `--session` | attach to an existing session by ID |
 ## UI
 
