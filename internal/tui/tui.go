@@ -85,12 +85,6 @@ func (t *TUI) Run(ctx context.Context) {
 
 	t.split = newSplitInput(tt, tt.Output(), t.sess.Prompt(), nil)
 	t.split.onSubmit = func(input string) {
-		if strings.HasPrefix(input, "/q ") {
-			if prompt := strings.TrimSpace(input[3:]); prompt != "" {
-				t.sess.Queue(prompt) //nolint:errcheck
-			}
-			return
-		}
 		t.sess.Submit(input) //nolint:errcheck
 	}
 
@@ -275,15 +269,6 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 			msg = t.split.runQueuedCommand(cmd)
 		}
 		fmt.Fprintln(os.Stdout, msg)
-		return
-	}
-
-	if strings.HasPrefix(input, "/q ") {
-		prompt := strings.TrimSpace(input[3:])
-		if prompt != "" {
-			t.sess.Queue(prompt) //nolint:errcheck
-			fmt.Fprintf(os.Stderr, "queued: %s\n", prompt)
-		}
 		return
 	}
 
