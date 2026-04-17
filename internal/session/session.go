@@ -16,9 +16,9 @@ type Session struct {
 	ID    string
 }
 
-// MountPath returns the ollie-9p mount point from OLLIE_9MOUNT, or ~/mnt/ollie.
+// MountPath returns the ollie-9p mount point from OLLIE, or ~/mnt/ollie.
 func MountPath() string {
-	if m := os.Getenv("OLLIE_9MOUNT"); m != "" {
+	if m := os.Getenv("OLLIE"); m != "" {
 		return m
 	}
 	home, _ := os.UserHomeDir()

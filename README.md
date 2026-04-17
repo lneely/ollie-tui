@@ -18,7 +18,7 @@ The point is not the TUI itself. It is that a real, interactive client — with 
 olliesrv start
 ```
 
-By default the server mounts at `~/mnt/ollie`. Set `OLLIE_9MOUNT` to use a different path.
+By default the server mounts at `~/mnt/ollie`. Set `OLLIE` to use a different path.
 
 ## Build
 
@@ -38,7 +38,7 @@ By default, ollie resumes the last session for the current working directory. If
 
 | Flag | Description |
 |------|-------------|
-| `--mount` | ollie-9p mount path (default: `$OLLIE_9MOUNT` or `~/mnt/ollie`) |
+| `--mount` | ollie-9p mount path (default: `$OLLIE` or `~/mnt/ollie`) |
 | `--backend` | backend for the new session (e.g. `ollama`) |
 | `--model` | model for the new session (e.g. `qwen3:8b`) |
 | `--agent` | agent config to load |

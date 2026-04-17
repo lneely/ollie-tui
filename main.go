@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	mountFlag   := flag.String("mount", "", "ollie-9p mount path (default: $OLLIE_9MOUNT or ~/mnt/ollie)")
+	mountFlag   := flag.String("mount", "", "ollie-9p mount path (default: $OLLIE or ~/mnt/ollie)")
 	sessionFlag := flag.String("session", "", "attach to an existing session by ID")
 	resumeFlag  := flag.Bool("resume", false, "attach to the last session")
 	newFlag     := flag.Bool("new", false, "force creation of a new session")
