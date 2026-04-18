@@ -19,6 +19,7 @@ func main() {
 	modelFlag   := flag.String("model", "", "model for new session")
 	agentFlag   := flag.String("agent", "", "agent for new session")
 	cwdFlag     := flag.String("cwd", "", "working directory (default: $PWD)")
+	envFlag     := flag.String("env", "", "comma-separated env vars to inject (e.g. TOKEN,HOME)")
 	flag.Parse()
 
 	cwdExplicit := *cwdFlag != ""
@@ -104,6 +105,10 @@ func main() {
 	}
 
 	session.SaveLastSession(cwd, sess.ID) //nolint:errcheck
+
+	if *envFlag != "" {
+		sess.InjectEnv(*envFlag)
+	}
 
 	tui.New(sess).Run(context.Background())
 }
