@@ -222,24 +222,6 @@ func (s *Session) SystemPrompt() (string, error) {
 	return string(data), nil
 }
 
-// InjectEnv writes comma-separated var names to s/{id}/env, injecting their
-// current process values into the session.
-func (s *Session) InjectEnv(vars string) {
-	var sb strings.Builder
-	for _, name := range strings.Split(vars, ",") {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if v := os.Getenv(name); v != "" {
-			fmt.Fprintf(&sb, "%s=%s\n", name, v)
-		}
-	}
-	if sb.Len() > 0 {
-		os.WriteFile(s.path("env"), []byte(sb.String()), 0600) //nolint:errcheck
-	}
-}
-
 // Rename changes the session's directory name via os.Rename (wstat on 9P).
 // Updates the in-memory ID and the last-session file on success.
 func (s *Session) Rename(newName string) error {
