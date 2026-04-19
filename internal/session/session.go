@@ -191,7 +191,7 @@ func (s *Session) Submit(text string) error {
 
 // Queue enqueues a prompt for execution after the current turn.
 func (s *Session) Queue(text string) error {
-	return os.WriteFile(s.path("enqueue"), []byte(text), 0644)
+	return os.WriteFile(s.path("fifo.in"), []byte(text), 0644)
 }
 
 // Stop sends a stop signal to the session.
