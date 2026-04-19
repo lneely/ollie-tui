@@ -142,7 +142,7 @@ func Create(mount string, opts map[string]string) (*Session, error) {
 	}
 
 	var cmd strings.Builder
-	for _, k := range []string{"backend", "model", "agent", "cwd"} {
+	for _, k := range []string{"name", "backend", "model", "agent", "cwd"} {
 		if v := opts[k]; v != "" {
 			cmd.WriteString(k)
 			cmd.WriteByte('=')
@@ -152,6 +152,11 @@ func Create(mount string, opts map[string]string) (*Session, error) {
 	}
 	if err := os.WriteFile(filepath.Join(mount, "s", "new"), []byte(cmd.String()), 0644); err != nil {
 		return nil, fmt.Errorf("write s/new: %w", err)
+	}
+
+	// If a name was given, the server uses it as the session ID directly.
+	if name := opts["name"]; name != "" {
+		return &Session{Mount: mount, ID: name}, nil
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -212,6 +217,9 @@ func (s *Session) IsIdle() bool {
 	}
 	return strings.TrimSpace(string(data)) == "idle"
 }
+
+// StateWaitPath returns the path to the statewait file for this session.
+func (s *Session) StateWaitPath() string { return s.path("statewait") }
 
 // SystemPrompt returns the fully rendered system prompt for this session.
 func (s *Session) SystemPrompt() (string, error) {

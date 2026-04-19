@@ -300,13 +300,44 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 // submitAndWait writes the prompt to the session and tails the chat file,
 // writing new bytes to out, until the agent returns to idle.
 func (t *TUI) submitAndWait(ctx context.Context, input string, out io.Writer) {
+	// Open statewait before submitting so the baseline is snapshotted at "idle".
+	sw, swErr := os.Open(t.sess.StateWaitPath())
+
 	if err := t.sess.Submit(input); err != nil {
 		fmt.Fprintln(os.Stderr, "submit:", err)
+		if swErr == nil {
+			sw.Close()
+		}
 		return
 	}
-	// Brief grace period for the server to dispatch the write and update state.
-	time.Sleep(150 * time.Millisecond)
+
+	if swErr != nil {
+		time.Sleep(150 * time.Millisecond)
+	} else {
+		t.waitNonIdle(ctx, sw)
+	}
 	t.tailUntilIdle(ctx, out)
+}
+
+// waitNonIdle blocks until the agent leaves the idle state, using the
+// already-open statewait file (which has the "idle" baseline baked in).
+// The server uses a 5s internal timeout; if it fires before state changes,
+// we close and reopen to retry.
+func (t *TUI) waitNonIdle(ctx context.Context, sw *os.File) {
+	buf := make([]byte, 64)
+	for ctx.Err() == nil {
+		n, _ := sw.Read(buf)
+		sw.Close()
+		if n > 0 || !t.sess.IsIdle() {
+			return
+		}
+		var err error
+		sw, err = os.Open(t.sess.StateWaitPath())
+		if err != nil {
+			return
+		}
+	}
+	sw.Close()
 }
 
 // tailUntilIdle tails the chat file from the current offset, writing new

@@ -15,6 +15,7 @@ func main() {
 	sessionFlag := flag.String("session", "", "attach to an existing session by ID")
 	resumeFlag  := flag.Bool("resume", false, "attach to the last session")
 	newFlag     := flag.Bool("new", false, "force creation of a new session")
+	nameFlag    := flag.String("name", "", "name for new session")
 	backendFlag := flag.String("backend", "", "backend for new session")
 	modelFlag   := flag.String("model", "", "model for new session")
 	agentFlag   := flag.String("agent", "", "agent for new session")
@@ -61,7 +62,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "session: %s (resumed)\n", sess.ID)
 
 	case *newFlag:
-		sess, err = session.Create(mount, sessionOpts(*backendFlag, *modelFlag, *agentFlag, cwd))
+		sess, err = session.Create(mount, sessionOpts(*nameFlag, *backendFlag, *modelFlag, *agentFlag, cwd))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "create session:", err)
 			os.Exit(1)
@@ -72,7 +73,7 @@ func main() {
 	default:
 		id, loadErr := session.LoadLastSession(cwd)
 		if loadErr != nil || id == "" {
-			sess, err = session.Create(mount, sessionOpts(*backendFlag, *modelFlag, *agentFlag, cwd))
+			sess, err = session.Create(mount, sessionOpts(*nameFlag, *backendFlag, *modelFlag, *agentFlag, cwd))
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "create session:", err)
 				os.Exit(1)
@@ -82,7 +83,7 @@ func main() {
 		} else {
 			sess, err = session.Attach(mount, id)
 			if err != nil {
-				sess, err = session.Create(mount, sessionOpts(*backendFlag, *modelFlag, *agentFlag, cwd))
+				sess, err = session.Create(mount, sessionOpts(*nameFlag, *backendFlag, *modelFlag, *agentFlag, cwd))
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "create session:", err)
 					os.Exit(1)
@@ -109,8 +110,9 @@ func main() {
 }
 
 // sessionOpts builds the opts map for session.Create.
-func sessionOpts(backend, model, agent, cwd string) map[string]string {
+func sessionOpts(name, backend, model, agent, cwd string) map[string]string {
 	return map[string]string{
+		"name":    name,
 		"backend": backend,
 		"model":   model,
 		"agent":   agent,
