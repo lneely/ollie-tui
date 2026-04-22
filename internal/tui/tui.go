@@ -422,6 +422,3 @@ func (t *TUI) handleFrontendCmd(cmd string) {
 	}
 }
 
-func squashWhitespace(s string) string {
-	return strings.Join(strings.Fields(s), " ")
-}
