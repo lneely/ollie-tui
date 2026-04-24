@@ -211,11 +211,17 @@ func (s *Session) Control(cmd string) error {
 
 // IsIdle reports whether the agent is currently idle.
 func (s *Session) IsIdle() bool {
-	data, err := os.ReadFile(s.path("state"))
+	data, err := os.ReadFile(s.path("cfg"))
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(string(data)) == "idle"
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if ok && k == "state" {
+			return strings.TrimSpace(v) == "idle"
+		}
+	}
+	return false
 }
 
 // StateWaitPath returns the path to the statewait file for this session.
