@@ -20,14 +20,11 @@ import (
 
 const ctrlCExitWindow = 2 * time.Second
 
-// recentHistory implements readline.IHistory for the multiline editor.
-type recentHistory struct {
-	entries []string
-}
+type recentHistory struct{ entries []string }
 
 var _ readline.IHistory = (*recentHistory)(nil)
 
-func (h *recentHistory) Len() int { return len(h.entries) }
+func (h *recentHistory) Len() int        { return len(h.entries) }
 func (h *recentHistory) At(i int) string {
 	if i >= 0 && i < len(h.entries) {
 		return h.entries[i]
@@ -35,21 +32,20 @@ func (h *recentHistory) At(i int) string {
 	return ""
 }
 
-// TUI is the terminal frontend. It drives an ollie-9p session via file I/O.
+// TUI is the terminal frontend.
 type TUI struct {
 	sess      *session.Session
 	appCancel context.CancelCauseFunc
 	split     *splitInput
 	history   recentHistory
-	chatOff   int64 // current read offset in the chat file
+	chatOff   int64
 }
 
-// New creates a TUI backed by the given session.
 func New(sess *session.Session) *TUI {
 	return &TUI{sess: sess}
 }
 
-// Run starts the interactive readline loop, blocking until the user exits.
+// Run starts the interactive loop, blocking until the user exits.
 func (t *TUI) Run(ctx context.Context) {
 	tt, err := gotty.Open()
 	if err != nil {
@@ -72,14 +68,12 @@ func (t *TUI) Run(ctx context.Context) {
 		}
 		return fmt.Fprint(w, "... ")
 	})
-
 	ed.SubmitOnEnterWhen(func(lines []string, _ int) bool {
 		if len(lines) <= 1 {
 			return true
 		}
 		return !strings.HasSuffix(strings.TrimSpace(lines[len(lines)-1]), "\\")
 	})
-
 	ed.SetHistory(&t.history)
 	ed.SetHistoryCycling(true)
 
@@ -92,7 +86,7 @@ func (t *TUI) Run(ctx context.Context) {
 	t.appCancel = appCancel
 	defer appCancel(nil)
 
-	// SIGTERM cancels the context; SIGINT interrupts a running turn.
+	// SIGINT: stop running turn. SIGTERM: exit.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -101,10 +95,7 @@ func (t *TUI) Run(ctx context.Context) {
 			select {
 			case <-appCtx.Done():
 				return
-			case sig, ok := <-sigCh:
-				if !ok {
-					return
-				}
+			case sig := <-sigCh:
 				if sig == syscall.SIGTERM {
 					appCancel(fmt.Errorf("signal: terminated"))
 					return
@@ -116,73 +107,24 @@ func (t *TUI) Run(ctx context.Context) {
 		}
 	}()
 
-	// chatGrew is signalled by a background goroutine when the chat file grows
-	// while we are blocked in ed.Read — i.e. another client is active on this session.
-	chatGrew := make(chan struct{}, 1)
-	go func() {
-		for appCtx.Err() == nil {
-			time.Sleep(100 * time.Millisecond)
-			info, err := os.Stat(t.sess.ChatPath())
-			if err == nil && info.Size() > t.chatOff {
-				select {
-				case chatGrew <- struct{}{}:
-				default:
-				}
-			}
-		}
-	}()
+	// Show existing chat on attach.
+	if _, h, err := tt.Size(); err == nil && h > 0 {
+		clearScreenAndMoveToBottom(tt.Output(), h)
+	}
+	t.drainChat(os.Stdout)
+
+	// If session is already running, tail until idle.
+	if !t.sess.IsIdle() {
+		t.tailUntilIdle(appCtx, os.Stdout)
+	}
 
 	var lastCtrlC time.Time
-	firstRead := true
 
 	for appCtx.Err() == nil {
-		if firstRead {
-			firstRead = false
-			if _, h, err := tt.Size(); err == nil && h > 0 {
-				clearScreenAndMoveToBottom(tt.Output(), h)
-			}
-			if f, err := os.Open(t.sess.ChatPath()); err == nil {
-				cw := newDiffColorWriter(os.Stdout)
-				n, _ := io.Copy(cw, f)
-				cw.Flush()
-				t.chatOff = n
-				f.Close()
-			}
-			if !t.sess.IsIdle() {
-				t.tailUntilIdle(appCtx, os.Stdout)
-			}
-		}
-
-		// Drain stale signals accumulated while we were in tailUntilIdle/submitAndWait.
-		for len(chatGrew) > 0 {
-			<-chatGrew
-		}
-
-		// Use a per-read context so chatGrew can interrupt ed.Read without
-		// cancelling the whole app.
-		readCtx, readCancel := context.WithCancel(appCtx)
-		go func() {
-			defer readCancel()
-			select {
-			case <-chatGrew:
-			case <-readCtx.Done():
-			}
-		}()
-
-		lines, err := ed.Read(readCtx)
-		readCancel()
-
+		lines, err := ed.Read(appCtx)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
-			}
-			// If the per-read context was cancelled by the watcher (chatGrew)
-			// but the app is still alive, drain and continue regardless of the
-			// specific error type returned by the readline library.
-			if readCtx.Err() != nil && appCtx.Err() == nil {
-				fmt.Fprintln(os.Stdout)
-				t.tailUntilIdle(appCtx, os.Stdout)
-				continue
 			}
 			errs := err.Error()
 			if errs == "interrupted" || errs == "^C" {
@@ -200,11 +142,9 @@ func (t *TUI) Run(ctx context.Context) {
 
 		input := strings.Join(lines, "\n")
 		lastCtrlC = time.Time{}
-
 		if strings.TrimSpace(input) == "" {
 			continue
 		}
-
 		t.history.entries = append(t.history.entries, input)
 
 		if len(lines) == 1 {
@@ -216,49 +156,23 @@ func (t *TUI) Run(ctx context.Context) {
 			}
 		}
 
-		t.processInputWithSplit(appCtx, input, &ed)
+		t.processInput(appCtx, input, &ed)
 	}
 }
 
-func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multiline.Editor) {
+func (t *TUI) processInput(ctx context.Context, input string, ed *multiline.Editor) {
+	// Frontend-local commands.
 	if strings.HasPrefix(input, `\`) {
 		t.handleFrontendCmd(input[1:])
 		return
 	}
 
-	if input == "/kill" {
-		if err := t.sess.Kill(); err != nil {
-			fmt.Fprintln(os.Stderr, "kill:", err)
-			return
-		}
-		t.appCancel(fmt.Errorf("session killed"))
+	// Slash commands handled client-side.
+	if t.handleSlashCommand(input) {
 		return
 	}
 
-	if input == "/sp" {
-		sp, err := t.sess.SystemPrompt()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "sp:", err)
-			return
-		}
-		fmt.Println(sp)
-		return
-	}
-
-	if strings.HasPrefix(input, "/rn ") {
-		name := strings.TrimSpace(input[4:])
-		if name == "" {
-			fmt.Fprintln(os.Stderr, "usage: /rn <new-name>")
-			return
-		}
-		if err := t.sess.Rename(name); err != nil {
-			fmt.Fprintln(os.Stderr, "rename:", err)
-			return
-		}
-		fmt.Fprintf(os.Stderr, "renamed session to: %s\n", name)
-		return
-	}
-
+	// Queued command management.
 	if cmd, ok, err := parseQueuedCommandLine(input); ok {
 		var msg string
 		if err != nil {
@@ -272,13 +186,15 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 		return
 	}
 
+	// If agent is busy, just submit (inject/queue).
 	if !t.sess.IsIdle() {
 		t.sess.Submit(input) //nolint:errcheck
 		return
 	}
 
+	// Regular prompt → submit with split input.
 	if t.split == nil {
-		t.submitAndWait(ctx, input, os.Stdout)
+		t.submitAndTail(ctx, input, os.Stdout)
 		return
 	}
 
@@ -289,7 +205,7 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 		out = wrapper
 	}
 
-	t.submitAndWait(ctx, input, out)
+	t.submitAndTail(ctx, input, out)
 
 	_, pending := t.split.Exit()
 	if pending != "" {
@@ -297,57 +213,165 @@ func (t *TUI) processInputWithSplit(ctx context.Context, input string, ed *multi
 	}
 }
 
-// submitAndWait writes the prompt to the session and tails the chat file,
-// writing new bytes to out, until the agent returns to idle.
-func (t *TUI) submitAndWait(ctx context.Context, input string, out io.Writer) {
-	// Open statewait before submitting so the baseline is snapshotted at "idle".
-	sw, swErr := os.Open(t.sess.StateWaitPath())
-
+// submitAndTail writes the prompt, waits for the agent to start, then tails
+// chat until idle. Follows the sh script protocol exactly:
+//   echo prompt > prompt; cat statewait >/dev/null; while !idle: tail chat
+func (t *TUI) submitAndTail(ctx context.Context, input string, out io.Writer) {
 	if err := t.sess.Submit(input); err != nil {
 		fmt.Fprintln(os.Stderr, "submit:", err)
-		if swErr == nil {
-			sw.Close()
-		}
 		return
 	}
 
-	if swErr != nil {
-		time.Sleep(150 * time.Millisecond)
-	} else {
-		t.waitNonIdle(ctx, sw)
-	}
+	// Block until state leaves idle.
+	t.sess.WaitStateChange()
+
 	t.tailUntilIdle(ctx, out)
 }
 
-// waitNonIdle blocks until the agent leaves the idle state, using the
-// already-open statewait file (which has the "idle" baseline baked in).
-// The server uses a 5s internal timeout; if it fires before state changes,
-// we close and reopen to retry.
-func (t *TUI) waitNonIdle(ctx context.Context, sw *os.File) {
-	buf := make([]byte, 64)
-	for ctx.Err() == nil {
-		n, _ := sw.Read(buf)
-		sw.Close()
-		if n > 0 || !t.sess.IsIdle() {
-			return
+// handleSlashCommand handles commands client-side by reading session files
+// directly. Returns true if handled.
+func (t *TUI) handleSlashCommand(input string) bool {
+	cmd, arg, _ := strings.Cut(input, " ")
+	arg = strings.TrimSpace(arg)
+
+	switch cmd {
+	case "/stop":
+		t.sess.Stop() //nolint:errcheck
+	case "/kill":
+		if err := t.sess.Kill(); err != nil {
+			fmt.Fprintln(os.Stderr, "kill:", err)
+			return true
 		}
-		var err error
-		sw, err = os.Open(t.sess.StateWaitPath())
-		if err != nil {
-			return
+		t.appCancel(fmt.Errorf("session killed"))
+	case "/compact":
+		t.sess.Control("compact") //nolint:errcheck
+	case "/clear":
+		t.sess.Control("clear") //nolint:errcheck
+	case "/models":
+		t.catSessionFile("models")
+	case "/usage":
+		t.catSessionFile("usage")
+	case "/ctxsz":
+		t.catSessionFile("ctxsz")
+	case "/sp":
+		t.catSessionFile("systemprompt")
+	case "/cwd":
+		if arg == "" {
+			fmt.Println(t.sess.CfgGet("cwd"))
+		} else {
+			t.sess.CfgWrite(fmt.Sprintf("cwd=%s\n", arg)) //nolint:errcheck
 		}
+	case "/agent":
+		if arg == "" {
+			fmt.Println(t.sess.CfgGet("agent"))
+		} else {
+			t.sess.CfgWrite(fmt.Sprintf("agent=%s\n", arg)) //nolint:errcheck
+		}
+	case "/model":
+		if arg == "" {
+			fmt.Println(t.sess.CfgGet("model"))
+		} else {
+			t.sess.CfgWrite(fmt.Sprintf("model=%s\n", arg)) //nolint:errcheck
+		}
+	case "/backend":
+		if arg == "" {
+			fmt.Println(t.sess.CfgGet("backend"))
+		} else {
+			t.sess.CfgWrite(fmt.Sprintf("backend=%s\n", arg)) //nolint:errcheck
+		}
+	case "/backends":
+		t.catMountFile("backends")
+	case "/tools":
+		t.catMountDir("t")
+	case "/skills":
+		t.catMountDir("sk")
+	case "/agents":
+		t.catMountDir("a")
+	case "/rn":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "usage: /rn <new-name>")
+		} else if err := t.sess.Rename(arg); err != nil {
+			fmt.Fprintln(os.Stderr, "rename:", err)
+		} else {
+			cwd, _ := os.Getwd()
+			session.SaveLastSession(cwd, arg) //nolint:errcheck
+			fmt.Fprintf(os.Stderr, "renamed session to: %s\n", arg)
+		}
+	case "/q":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "usage: /q <prompt>")
+		} else {
+			t.sess.Queue(arg) //nolint:errcheck
+			fmt.Fprintln(os.Stderr, "queued")
+		}
+	default:
+		return false
 	}
-	sw.Close()
+	return true
 }
 
-// tailUntilIdle tails the chat file from the current offset, writing new
-// bytes to out, until the session becomes idle. Used both after submitting
-// a prompt and on startup when attaching to an already-running session.
+func (t *TUI) catSessionFile(name string) {
+	data, err := t.sess.ReadFile(name)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, name+":", err)
+		return
+	}
+	fmt.Print(data)
+}
+
+func (t *TUI) catMountFile(name string) {
+	data, err := os.ReadFile(t.sess.Mount + "/" + name)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, name+":", err)
+		return
+	}
+	fmt.Print(string(data))
+}
+
+func (t *TUI) catMountDir(subdir string) {
+	entries, err := os.ReadDir(t.sess.Mount + "/" + subdir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, subdir+":", err)
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			fmt.Println("  " + e.Name())
+		}
+	}
+}
+
+// drainChat reads all new bytes from the chat file.
+func (t *TUI) drainChat(out io.Writer) {
+	f, err := os.Open(t.sess.ChatPath())
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if _, err := f.Seek(t.chatOff, io.SeekStart); err != nil {
+		return
+	}
+	cw := newDiffColorWriter(out)
+	buf := make([]byte, 4096)
+	for {
+		n, _ := f.Read(buf)
+		if n == 0 {
+			break
+		}
+		cw.Write(buf[:n]) //nolint:errcheck
+		t.chatOff += int64(n)
+	}
+	cw.Flush()
+}
+
+// tailUntilIdle tails the chat file until the session returns to idle.
+// Same protocol as the sh script:
+//   while not idle: read new chat bytes, sleep 50ms
+//   final drain
 func (t *TUI) tailUntilIdle(ctx context.Context, out io.Writer) {
 	f, err := os.Open(t.sess.ChatPath())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open chat:", err)
-		waitIdle(ctx, t.sess)
 		return
 	}
 	defer f.Close()
@@ -360,6 +384,9 @@ func (t *TUI) tailUntilIdle(ctx context.Context, out io.Writer) {
 	cw := newDiffColorWriter(out)
 
 	for ctx.Err() == nil {
+		if t.sess.IsIdle() {
+			break
+		}
 		for {
 			n, _ := f.Read(buf)
 			if n == 0 {
@@ -368,36 +395,21 @@ func (t *TUI) tailUntilIdle(ctx context.Context, out io.Writer) {
 			cw.Write(buf[:n]) //nolint:errcheck
 			t.chatOff += int64(n)
 		}
-
-		if t.sess.IsIdle() {
-			// One final drain to catch output written just before state went idle.
-			for {
-				n, _ := f.Read(buf)
-				if n == 0 {
-					break
-				}
-				cw.Write(buf[:n]) //nolint:errcheck
-				t.chatOff += int64(n)
-			}
-			cw.Flush()
-			break
-		}
-
 		time.Sleep(50 * time.Millisecond)
 	}
-}
 
-// waitIdle polls state until the agent is idle or the context is done.
-func waitIdle(ctx context.Context, sess *session.Session) {
-	for ctx.Err() == nil {
-		if sess.IsIdle() {
-			return
+	// Final drain.
+	for {
+		n, _ := f.Read(buf)
+		if n == 0 {
+			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		cw.Write(buf[:n]) //nolint:errcheck
+		t.chatOff += int64(n)
 	}
+	cw.Flush()
 }
 
-// handleFrontendCmd processes `\` commands (frontend-local operations).
 func (t *TUI) handleFrontendCmd(cmd string) {
 	name, arg, _ := strings.Cut(cmd, " ")
 	arg = strings.TrimSpace(arg)
@@ -421,4 +433,3 @@ func (t *TUI) handleFrontendCmd(cmd string) {
 		fmt.Fprintln(os.Stderr, `\switch <id>  switch session`)
 	}
 }
-

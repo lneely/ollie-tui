@@ -39,13 +39,11 @@ func listSessionIDs(mount string) ([]string, error) {
 	return ids, nil
 }
 
-// lastSessionPath returns the path to the last-session file.
 func lastSessionPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "ollie", "last-session")
 }
 
-// readLastSessionLines reads the last-session file and returns non-empty lines.
 func readLastSessionLines(path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -100,7 +98,6 @@ func LoadLastSession(cwd string) (string, error) {
 	return "", nil
 }
 
-// updateLastSessionID replaces oldID with newID across all entries (used by Rename).
 func updateLastSessionID(oldID, newID string) error {
 	path := lastSessionPath()
 	lines, err := readLastSessionLines(path)
@@ -128,9 +125,7 @@ func Attach(mount, id string) (*Session, error) {
 	return &Session{Mount: mount, ID: id}, nil
 }
 
-// Create creates a new session by writing KV pairs to s/new and waiting
-// for the corresponding directory to appear under s/. opts may contain
-// backend, model, agent, and cwd values; empty values are omitted.
+// Create creates a new session by writing KV pairs to s/new.
 func Create(mount string, opts map[string]string) (*Session, error) {
 	before, err := listSessionIDs(mount)
 	if err != nil {
@@ -154,7 +149,6 @@ func Create(mount string, opts map[string]string) (*Session, error) {
 		return nil, fmt.Errorf("write s/new: %w", err)
 	}
 
-	// If a name was given, the server uses it as the session ID directly.
 	if name := opts["name"]; name != "" {
 		return &Session{Mount: mount, ID: name}, nil
 	}
@@ -189,55 +183,54 @@ func (s *Session) ChatPath() string { return s.path("chat") }
 // Prompt returns the readline prompt string.
 func (s *Session) Prompt() string { return "> " }
 
-// Submit writes a prompt to the agent. The server dispatches it asynchronously on close.
+// Submit writes a prompt to the session prompt file.
 func (s *Session) Submit(text string) error {
 	return os.WriteFile(s.path("prompt"), []byte(text), 0644)
 }
 
-// Queue enqueues a prompt for execution after the current turn.
-func (s *Session) Queue(text string) error {
-	return os.WriteFile(s.path("fifo.in"), []byte(text), 0644)
-}
-
-// Stop sends a stop signal to the session.
+// Stop sends a stop signal via ctl.
 func (s *Session) Stop() error {
 	return os.WriteFile(s.path("ctl"), []byte("stop\n"), 0644)
 }
 
-// Control sends a slash command to the session ctl file (e.g. "/cwd /path").
-func (s *Session) Control(cmd string) error {
-	return os.WriteFile(s.path("ctl"), []byte(cmd+"\n"), 0644)
-}
-
-// IsIdle reports whether the agent is currently idle.
-func (s *Session) IsIdle() bool {
+// CfgGet reads a key from the cfg file.
+func (s *Session) CfgGet(key string) string {
 	data, err := os.ReadFile(s.path("cfg"))
 	if err != nil {
-		return false
+		return ""
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		k, v, ok := strings.Cut(line, "=")
-		if ok && k == "state" {
-			return strings.TrimSpace(v) == "idle"
+		if ok && k == key {
+			return strings.TrimSpace(v)
 		}
 	}
-	return false
+	return ""
 }
 
-// StateWaitPath returns the path to the statewait file for this session.
-func (s *Session) StateWaitPath() string { return s.path("statewait") }
+// IsIdle reports whether the agent is currently idle.
+func (s *Session) IsIdle() bool { return s.CfgGet("state") == "idle" }
 
-// SystemPrompt returns the fully rendered system prompt for this session.
-func (s *Session) SystemPrompt() (string, error) {
-	data, err := os.ReadFile(s.path("systemprompt"))
+// WaitStateChange blocks on the statewait file until the state changes.
+// Returns the new state string.
+func (s *Session) WaitStateChange() string {
+	data, err := os.ReadFile(s.path("statewait"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// ReadFile reads a session file (e.g. "models", "usage", "ctxsz").
+func (s *Session) ReadFile(name string) (string, error) {
+	data, err := os.ReadFile(s.path(name))
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
 }
 
-// Rename changes the session's directory name via os.Rename (wstat on 9P).
-// Updates the in-memory ID and the last-session file on success.
+// Rename changes the session directory name.
 func (s *Session) Rename(newName string) error {
 	oldDir := filepath.Join(s.Mount, "s", s.ID)
 	newDir := filepath.Join(s.Mount, "s", newName)
@@ -247,4 +240,28 @@ func (s *Session) Rename(newName string) error {
 	updateLastSessionID(s.ID, newName) //nolint:errcheck
 	s.ID = newName
 	return nil
+}
+
+// Control writes a command to the ctl file.
+func (s *Session) Control(cmd string) error {
+	return os.WriteFile(s.path("ctl"), []byte(cmd+"\n"), 0644)
+}
+
+// CfgWrite writes key=value pairs to the cfg file.
+func (s *Session) CfgWrite(content string) error {
+	return os.WriteFile(s.path("cfg"), []byte(content), 0644)
+}
+
+// Queue enqueues a prompt for later execution.
+func (s *Session) Queue(text string) error {
+	return os.WriteFile(s.path("fifo.in"), []byte(text), 0644)
+}
+
+// ChatSize returns the current size of the chat file.
+func (s *Session) ChatSize() int64 {
+	info, err := os.Stat(s.ChatPath())
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
