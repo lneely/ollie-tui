@@ -14,13 +14,14 @@ const (
 	ansiDim   = "\033[2m"
 )
 
-// diffColorWriter wraps an io.Writer and colorizes diff lines within tool
-// results. A tool result block begins on the line after a "-> toolname(...)"
-// call line and ends at the next known-prefix chat line.
+// diffColorWriter wraps an io.Writer and colorizes diff lines within ```diff
+// fenced blocks in tool results. Coloring is scoped strictly to the fence —
+// incidental +/- outside a diff block are passed through unchanged.
 type diffColorWriter struct {
-	out      io.Writer
-	buf      []byte
-	inResult bool
+	out         io.Writer
+	buf         []byte
+	inResult    bool
+	inDiffBlock bool
 }
 
 func newDiffColorWriter(out io.Writer) *diffColorWriter {
@@ -60,33 +61,43 @@ func isBlockStart(line string) bool {
 }
 
 func (w *diffColorWriter) writeLine(line string) {
-	// A tool call starts the next block as a result block.
 	if strings.HasPrefix(line, "-> ") {
 		w.inResult = true
+		w.inDiffBlock = false
 		io.WriteString(w.out, line) //nolint:errcheck
 		return
 	}
-	// Any other known block prefix ends result mode.
 	if w.inResult && isBlockStart(line) {
 		w.inResult = false
+		w.inDiffBlock = false
 	}
 	if w.inResult {
-		w.writeDiffLine(line)
-		return
+		stripped := strings.TrimRight(line, "\n")
+		if stripped == "```diff" {
+			w.inDiffBlock = true
+			io.WriteString(w.out, line) //nolint:errcheck
+			return
+		}
+		if w.inDiffBlock && stripped == "```" {
+			w.inDiffBlock = false
+			io.WriteString(w.out, line) //nolint:errcheck
+			return
+		}
+		if w.inDiffBlock {
+			w.writeDiffLine(line)
+			return
+		}
 	}
 	io.WriteString(w.out, line) //nolint:errcheck
 }
 
 func (w *diffColorWriter) writeDiffLine(line string) {
-	// file_edit emits ＋ (U+FF0B) and − (U+2212) as the leading byte of diff
-	// lines so that only these explicit markers trigger coloring, not incidental
-	// ASCII +/- in command output (e.g. ls -la permissions).
 	switch {
-	case strings.HasPrefix(line, "＋++") || strings.HasPrefix(line, "−--"):
+	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
 		io.WriteString(w.out, ansiDim+line+ansiReset) //nolint:errcheck
-	case strings.HasPrefix(line, "＋"):
+	case strings.HasPrefix(line, "+"):
 		io.WriteString(w.out, ansiGreen+line+ansiReset) //nolint:errcheck
-	case strings.HasPrefix(line, "−"):
+	case strings.HasPrefix(line, "-"):
 		io.WriteString(w.out, ansiRed+line+ansiReset) //nolint:errcheck
 	case strings.HasPrefix(line, "@@"):
 		io.WriteString(w.out, ansiCyan+line+ansiReset) //nolint:errcheck
