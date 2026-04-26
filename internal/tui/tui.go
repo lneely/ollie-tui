@@ -114,14 +114,21 @@ func (t *TUI) Run(ctx context.Context) {
 	}
 	t.drainChat(os.Stdout)
 
-	// If session is already running, tail until idle.
-	if !t.sess.IsIdle() {
-		t.tailUntilIdle(appCtx, os.Stdout)
-	}
+	// Background goroutine: continuously tail the chat file.
+	go t.backgroundTail(appCtx)
+
+	// Background goroutine: continuously tail the chat file.
 
 	var lastCtrlC time.Time
 
 	for appCtx.Err() == nil {
+		// Wait for idle before showing the prompt.
+		for !t.sess.IsIdle() && appCtx.Err() == nil {
+			time.Sleep(200 * time.Millisecond)
+		}
+		// Drain any remaining chat content before showing prompt.
+		t.drainChat(os.Stdout)
+
 		lines, err := ed.Read(appCtx)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -201,18 +208,14 @@ func (t *TUI) processInput(ctx context.Context, input string, ed *multiline.Edit
 
 	// Regular prompt → submit with split input.
 	if t.split == nil {
-		t.submitAndTail(ctx, input, os.Stdout)
+		t.sess.Submit(input) //nolint:errcheck
 		return
 	}
 
 	t.split.SetPrompt(t.sess.Prompt())
-	wrapper := t.split.Enter()
-	out := io.Writer(os.Stdout)
-	if wrapper != nil {
-		out = wrapper
-	}
+	t.split.Enter()
 
-	t.submitAndTail(ctx, input, out)
+	t.sess.Submit(input) //nolint:errcheck
 
 	_, pending := t.split.Exit()
 	if pending != "" {
@@ -220,20 +223,6 @@ func (t *TUI) processInput(ctx context.Context, input string, ed *multiline.Edit
 	}
 }
 
-// submitAndTail writes the prompt, waits for the agent to start, then tails
-// chat until idle. Follows the sh script protocol exactly:
-//   echo prompt > prompt; cat statewait >/dev/null; while !idle: tail chat
-func (t *TUI) submitAndTail(ctx context.Context, input string, out io.Writer) {
-	if err := t.sess.Submit(input); err != nil {
-		fmt.Fprintln(os.Stderr, "submit:", err)
-		return
-	}
-
-	// Block until state leaves idle.
-	t.sess.WaitStateChange()
-
-	t.tailUntilIdle(ctx, out)
-}
 
 // handleSlashCommand handles commands client-side by reading session files
 // directly. Returns true if handled.
@@ -349,6 +338,19 @@ func (t *TUI) catMountDir(subdir string) {
 }
 
 // drainChat reads all new bytes from the chat file.
+
+// backgroundTail continuously tails the chat file, printing new content
+// as it arrives regardless of whether the user submitted anything.
+func (t *TUI) backgroundTail(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+		t.drainChat(os.Stdout)
+	}
+}
 func (t *TUI) drainChat(out io.Writer) {
 	f, err := os.Open(t.sess.ChatPath())
 	if err != nil {
@@ -360,10 +362,15 @@ func (t *TUI) drainChat(out io.Writer) {
 	}
 	cw := newDiffColorWriter(out)
 	buf := make([]byte, 4096)
+	first := true
 	for {
 		n, _ := f.Read(buf)
 		if n == 0 {
 			break
+		}
+		if first {
+			fmt.Fprint(out, "\r\n")
+			first = false
 		}
 		cw.Write(buf[:n]) //nolint:errcheck
 		t.chatOff += int64(n)
@@ -456,6 +463,14 @@ func (t *TUI) runShellCommand(cmdStr string) {
 	}
 	cmd := exec.Command("sh", "-c", cmdStr)
 	cmd.Dir = cwd
+	cmd.Env = os.Environ()
+	if envData, err := t.sess.ReadFile("env"); err == nil {
+		for _, line := range strings.Split(envData, "\n") {
+			if line != "" {
+				cmd.Env = append(cmd.Env, line)
+			}
+		}
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -479,6 +494,7 @@ func (t *TUI) handleFrontendCmd(cmd string) {
 		}
 		t.sess = newSess
 		t.chatOff = 0
+		os.Setenv("OLLIE_SESSION_ID", newSess.ID)
 		cwd, _ := os.Getwd()
 		session.SaveLastSession(cwd, arg) //nolint:errcheck
 		fmt.Fprintf(os.Stderr, "switched to session: %s\n", arg)
