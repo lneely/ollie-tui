@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -167,6 +168,12 @@ func (t *TUI) processInput(ctx context.Context, input string, ed *multiline.Edit
 		return
 	}
 
+	// Shell commands: run locally instead of round-tripping through 9P.
+	if strings.HasPrefix(input, "!") {
+		t.runShellCommand(input[1:])
+		return
+	}
+
 	// Slash commands handled client-side.
 	if t.handleSlashCommand(input) {
 		return
@@ -244,9 +251,9 @@ func (t *TUI) handleSlashCommand(input string) bool {
 		}
 		t.appCancel(fmt.Errorf("session killed"))
 	case "/compact":
-		t.sess.Control("compact") //nolint:errcheck
+		t.controlAndDrain("compact")
 	case "/clear":
-		t.sess.Control("clear") //nolint:errcheck
+		t.controlAndDrain("clear")
 	case "/models":
 		t.catSessionFile("models")
 	case "/usage":
@@ -408,6 +415,52 @@ func (t *TUI) tailUntilIdle(ctx context.Context, out io.Writer) {
 		t.chatOff += int64(n)
 	}
 	cw.Flush()
+}
+
+// controlAndDrain sends a ctl command and polls until the resulting output
+// appears in the chat log. The ctl write is async, so we wait for the chat
+// file to grow (indicating the command produced output) and then for the
+// session to return to idle before draining.
+func (t *TUI) controlAndDrain(cmd string) {
+	before := t.sess.ChatSize()
+	if err := t.sess.Control(cmd); err != nil {
+		fmt.Fprintln(os.Stderr, cmd+":", err)
+		return
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if t.sess.ChatSize() != before {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// Wait for the command to finish (state back to idle).
+	for time.Now().Before(deadline) {
+		if t.sess.IsIdle() {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.drainChat(os.Stdout)
+}
+
+// runShellCommand executes a ! command locally, avoiding the 9P round-trip.
+func (t *TUI) runShellCommand(cmdStr string) {
+	cmdStr = strings.TrimSpace(cmdStr)
+	if cmdStr == "" {
+		return
+	}
+	cwd := t.sess.CfgGet("cwd")
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	cmd := exec.Command("sh", "-c", cmdStr)
+	cmd.Dir = cwd
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+	}
 }
 
 func (t *TUI) handleFrontendCmd(cmd string) {
